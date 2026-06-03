@@ -21,10 +21,10 @@ export class UserResponseDto {
   @ApiProperty({ enum: UserRole, example: UserRole.USER })
   @Expose()
   role!: UserRole;
-}
 
-export function toUserResponse(user: UserEntity): UserResponseDto {
-  return plainToInstance(UserResponseDto, user, {
-    excludeExtraneousValues: true,
-  });
+  static fromEntity(user: UserEntity): UserResponseDto {
+    return plainToInstance(UserResponseDto, user, {
+      excludeExtraneousValues: true,
+    });
+  }
 }

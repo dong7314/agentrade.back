@@ -22,8 +22,8 @@ import { isUniqueViolation } from '@/database/utils/is-unique-violation';
 import { AuthProvider } from '@/common/enums/auth-provider.enum';
 import { LocalLoginDto } from '../dto/login.dto';
 import { LoginResultDto } from '../dto/login.result.dto';
+import { UserResponseDto } from '@/user/dto/user.response.dto';
 import { LocalRegisterDto } from '../dto/register.dto';
-import { toUserResponse, UserResponseDto } from '@/user/dto/user.response.dto';
 import {
   AccessTokenPayload,
   RefreshTokenPayload,
@@ -56,7 +56,7 @@ export class AuthService {
       name: dto.name,
     });
 
-    return toUserResponse(user);
+    return UserResponseDto.fromEntity(user);
   }
 
   async login(dto: LocalLoginDto): Promise<LoginResultDto> {
@@ -130,7 +130,7 @@ export class AuthService {
       throw new UnauthorizedException('인증 정보가 유효하지 않습니다.');
     }
 
-    const userResponse = toUserResponse(user);
+    const userResponse = UserResponseDto.fromEntity(user);
 
     const accessPayload: AccessTokenPayload = {
       sub: user.id,
@@ -178,7 +178,7 @@ export class AuthService {
       throw new UnauthorizedException('인증 정보가 유효하지 않습니다.');
     }
 
-    return toUserResponse(user);
+    return UserResponseDto.fromEntity(user);
   }
 
   // 로그아웃 기능
@@ -283,7 +283,7 @@ export class AuthService {
 
   // 사용자에 따라서 토큰 생성 후 결과 값을 반환
   async createLoginResult(user: UserEntity): Promise<LoginResultDto> {
-    const userResponse = toUserResponse(user);
+    const userResponse = UserResponseDto.fromEntity(user);
     // refresh 토큰 session id 생성
     const sessionId = randomUUID();
 
