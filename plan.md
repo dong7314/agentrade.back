@@ -1,10 +1,10 @@
 # Agentrade Backend Plan
 
-최종 업데이트: 2026-06-01
+최종 업데이트: 2026-06-02
 
 이 문서는 `backend` 폴더에서 현재까지 어디까지 개발했는지, 이번 세션에서 어떤 방식으로 학습/개발을 진행했는지, 다른 컴퓨터에서 이어서 작업할 때 무엇부터 확인하면 되는지 정리한 인수인계 문서입니다.
 
-현재 백엔드는 NestJS + TypeORM + PostgreSQL + Scalar 기반으로 로컬 회원가입/로그인, 쿠키 기반 access/refresh token, DB 세션, Naver/Kakao OAuth 로그인 흐름까지 1차 구현된 상태입니다.
+현재 백엔드는 NestJS + TypeORM + PostgreSQL + Scalar 기반으로 로컬 회원가입/로그인, 쿠키 기반 access/refresh token, DB 세션, Naver/Kakao OAuth 로그인, 전략 생성/목록/상세 조회 흐름까지 1차 구현된 상태입니다.
 
 ## 1. 프로젝트 방향
 
@@ -141,12 +141,14 @@ TypeORM 연결 관련 파일:
 - `1779862091102-CreateUsers.ts`
 - `1779945199913-CreateAuthSessions.ts`
 - `1780033891985-CreateSocialAccounts.ts`
+- `1780380362818-CreateStrategies.ts`
 
 현재 핵심 테이블:
 
 - `users`
 - `auth_sessions`
 - `social_accounts`
+- `strategies`
 - `migrations`
 
 이전에 초기 실험 과정에서 생겼던 `User`, `SocialAccount` 같은 대문자 테이블은 현재 구조에서는 필요하지 않습니다. 현재 기준은 소문자 `users`, `auth_sessions`, `social_accounts`입니다.
@@ -192,9 +194,15 @@ src
 ├── main.ts
 ├── app.module.ts
 ├── common
-│   └── enums
+│   ├── dto
+│   │   └── pagination-query.dto.ts
+│   ├── enums
 │       ├── auth-provider.enum.ts
 │       └── user-role.enum.ts
+│   ├── types
+│   │   └── paginated.type.ts
+│   └── utils
+│       └── create-pagination-meta.ts
 ├── config
 │   ├── database.config.ts
 │   └── env.validation.ts
@@ -213,7 +221,7 @@ src
 │   ├── services
 │   │   └── user.service.ts
 │   └── user.module.ts
-└── auth
+├── auth
     ├── auth.module.ts
     ├── controllers
     │   └── auth.controller.ts
@@ -247,6 +255,24 @@ src
         ├── jwt-payload.type.ts
         ├── kakao
         └── naver
+└── strategy
+    ├── controllers
+    │   └── strategy.controller.ts
+    ├── docs
+    │   └── strategy-api.docs.ts
+    ├── dto
+    │   ├── create-strategy.dto.ts
+    │   ├── find-strategy.query.dto.ts
+    │   └── strategy-response.dto.ts
+    ├── entities
+    │   └── strategy.entity.ts
+    ├── enums
+    │   ├── exchange.enum.ts
+    │   ├── strategy-mode.enum.ts
+    │   └── strategy-status.enum.ts
+    ├── services
+    │   └── strategy.service.ts
+    └── strategy.module.ts
 ```
 
 ## 5. User 도메인
@@ -581,7 +607,99 @@ GET /auth/kakao/callback
 - 같은 provider 계정으로 동시에 callback이 들어오는 경우 최종 방어는 `unique(provider, provider_user_id)` 제약입니다.
 - unique violation fallback은 이 동시 요청 상황에서 이미 생성된 social account를 다시 찾아 정상 로그인으로 이어가기 위한 보완입니다.
 
-## 12. 현재 검증 완료 상태
+## 12. Strategy 도메인
+
+2026-06-02 기준 전략 도메인 1차 구현을 완료했습니다.
+
+현재 구현된 API:
+
+- `POST /strategies`
+- `GET /strategies`
+- `GET /strategies/:id`
+
+현재 전략 생성 입력:
+
+- `name`
+- `market`
+- `prompt`
+- `intervalMinutes`
+- `scheduleAnchorAt`
+
+현재 전략 생성 기본값:
+
+- `exchange=upbit`
+- `strategyMode=paper`
+- `strategyStatus=draft`
+- `enabled=false`
+- `structuredStrategy=null`
+- `nextRunAt=null`
+
+현재 `StrategyEntity` 주요 컬럼:
+
+```text
+id
+user_id
+name
+exchange
+market
+prompt
+strategy_mode
+interval_minutes
+schedule_anchor_at
+next_run_at
+enabled
+strategy_status
+structured_strategy
+created_at
+updated_at
+deleted_at
+```
+
+전략 API 설계 원칙:
+
+- 모든 전략 API는 `JwtAuthGuard`를 통과해야 합니다.
+- 전략은 반드시 로그인 사용자에게 귀속됩니다.
+- 상세 조회는 `id + userId` 조건으로 조회하여 다른 사용자의 전략 접근을 막습니다.
+- 목록 조회는 현재 사용자 전략만 반환합니다.
+- 목록 조회는 공통 페이지네이션 응답을 사용합니다.
+- `market`, `strategyStatus`, `strategyMode`, `enabled` 필터를 지원합니다.
+- entity를 그대로 노출하지 않기 위해 `StrategyResponseDto`를 추가했습니다.
+
+공통 페이지네이션 파일:
+
+- `src/common/dto/pagination-query.dto.ts`
+- `src/common/types/paginated.type.ts`
+- `src/common/utils/create-pagination-meta.ts`
+
+전략 목록 조회 예:
+
+```http
+GET /strategies?page=1&limit=15&market=KRW-BTC&strategyStatus=draft&strategyMode=paper&enabled=false
+```
+
+응답 형태:
+
+```json
+{
+  "items": [],
+  "meta": {
+    "page": 1,
+    "limit": 15,
+    "total": 0,
+    "totalPages": 1,
+    "hasNextPage": false,
+    "hasPreviousPage": false
+  }
+}
+```
+
+현재 남은 정리 포인트:
+
+- `POST /strategies`도 `StrategyResponseDto`로 변환해서 응답하면 목록/상세와 더 일관됩니다.
+- `StrategyResponseDto` 기반 Swagger schema를 더 엄격히 고정할 수 있습니다.
+- 실제 Scalar에서 전략 생성/목록/상세를 한 번 더 수동 확인하면 좋습니다.
+
+## 13. 현재 검증 완료 상태
 
 코드 정적 검증:
 
@@ -591,7 +709,7 @@ pnpm exec eslint "src/**/*.ts"
 pnpm exec jest --runInBand
 ```
 
-위 명령은 2026-06-01 기준 통과했습니다.
+위 명령은 2026-06-02 기준 통과했습니다.
 
 서버 부팅 확인:
 
@@ -599,7 +717,7 @@ pnpm exec jest --runInBand
 pnpm start
 ```
 
-2026-06-01 기준 서버가 정상 부팅되고 다음 route가 매핑되는 것을 확인했습니다.
+2026-06-02 기준 서버가 정상 부팅되고 다음 route가 매핑되는 것을 확인했습니다.
 
 - `/health`
 - `/auth/register`
@@ -612,6 +730,8 @@ pnpm start
 - `/auth/kakao`
 - `/auth/kakao/callback`
 - `/user`
+- `/strategies`
+- `/strategies/:id`
 
 Scalar로 이미 확인한 흐름:
 
@@ -626,16 +746,21 @@ Scalar로 이미 확인한 흐름:
 - `POST /auth/logout`
 - logout 후 cookie clear 및 세션 revoke
 
-아직 직접 브라우저에서 끝까지 확인해야 하는 흐름:
+직접 확인한 OAuth 흐름:
 
-- `GET /auth/naver`부터 실제 Naver 로그인 완료까지
-- `GET /auth/kakao`부터 실제 Kakao 로그인 완료까지
-- OAuth 성공 후 `users`, `social_accounts`, `auth_sessions` row 생성 확인
-- 같은 email로 local 가입 후 Naver/Kakao 로그인 시 기존 user에 연결되는지 확인
+- `GET /auth/naver`부터 실제 Naver 로그인 완료까지 확인
+- `GET /auth/kakao`부터 실제 Kakao 로그인 완료까지 확인
 
-## 13. 다른 컴퓨터에서 이어서 작업할 때
+아직 Scalar에서 최종 수동 확인하면 좋은 흐름:
 
-### 13.1 기본 준비
+- `POST /strategies`
+- `GET /strategies`
+- `GET /strategies/:id`
+- 전략 목록 필터 및 페이지네이션 query
+
+## 14. 다른 컴퓨터에서 이어서 작업할 때
+
+### 14.1 기본 준비
 
 ```bash
 cd /path/to/agentrade/backend
@@ -656,7 +781,7 @@ DB_PORT=5432
 
 현재 프로젝트는 Docker로 DB를 띄우지 않습니다.
 
-### 13.2 `.env` 구성
+### 14.2 `.env` 구성
 
 현재 컴퓨터의 `backend/.env`와 같은 형태로 새 컴퓨터에도 `.env`를 구성합니다.
 
@@ -672,7 +797,7 @@ DB_PORT=5432
 - `KAKAO_CALLBACK_URL`
 - `FRONTEND_AUTH_REDIRECT_URL`
 
-### 13.3 DB migration 적용
+### 14.3 DB migration 적용
 
 ```bash
 pnpm migration:run
@@ -697,9 +822,10 @@ psql -d agentrade -c "\dt"
 psql -d agentrade -c "\d+ users"
 psql -d agentrade -c "\d+ auth_sessions"
 psql -d agentrade -c "\d+ social_accounts"
+psql -d agentrade -c "\d+ strategies"
 ```
 
-### 13.4 서버 실행
+### 14.4 서버 실행
 
 ```bash
 pnpm start:dev
@@ -711,7 +837,7 @@ pnpm start:dev
 http://localhost:4000/docs
 ```
 
-## 14. 다음 세션 시작 체크리스트
+## 15. 다음 세션 시작 체크리스트
 
 집에서 이어서 작업할 때는 아래 순서로 시작하면 됩니다.
 
@@ -733,12 +859,20 @@ pnpm start:dev
 4. `GET /auth/me`
 5. `POST /auth/logout`
 
+전략 API도 확인합니다.
+
+1. `POST /strategies`
+2. `GET /strategies`
+3. `GET /strategies/:id`
+4. `GET /strategies?page=1&limit=15&market=KRW-BTC&strategyStatus=draft&strategyMode=paper&enabled=false`
+
 DB 확인:
 
 ```bash
 psql -d agentrade -c "select id, email, provider, provider_id from users order by id desc limit 5;"
 psql -d agentrade -c "select id, user_id, provider, provider_user_id, email from social_accounts order by id desc limit 10;"
 psql -d agentrade -c "select id, user_id, revoked_at, expires_at from auth_sessions order by created_at desc limit 10;"
+psql -d agentrade -c "select id, user_id, name, market, strategy_mode, strategy_status, enabled from strategies order by created_at desc limit 10;"
 ```
 
 그다음 OAuth를 실제 브라우저에서 확인합니다.
@@ -750,33 +884,82 @@ psql -d agentrade -c "select id, user_id, revoked_at, expires_at from auth_sessi
 5. Kakao 로그인 완료 후 프론트 redirect URL로 이동하는지 확인
 6. DB의 `users`, `social_accounts`, `auth_sessions` 확인
 
-## 15. 바로 다음 작업 추천
+## 16. 바로 다음 작업 추천
 
 현재 코드 기준으로 다음 작업은 아래 순서가 좋습니다.
 
-### 15.1 OAuth 수동 검증
+### 16.1 Strategy 수정 API
 
-가장 먼저 Naver/Kakao OAuth를 실제 브라우저로 끝까지 테스트합니다.
+다음으로는 전략 초안 수정 API를 만드는 것이 좋습니다.
 
-확인할 것:
+추천 API:
 
-- redirect URL이 provider 개발자 콘솔에 등록된 callback URL과 정확히 일치하는지
-- state cookie가 저장되고 callback에서 정상 검증되는지
-- OAuth 성공 후 `access_token`, `refresh_token` cookie가 내려오는지
-- `social_accounts`에 provider 계정이 생성되는지
-- 같은 provider 계정으로 다시 로그인하면 user가 중복 생성되지 않는지
-- 같은 email의 local user가 있을 때 social account가 기존 user에 연결되는지
+```http
+PATCH /strategies/:id
+```
 
-### 15.2 작은 리팩토링
+수정 가능 필드:
+
+- `name`
+- `market`
+- `prompt`
+- `intervalMinutes`
+- `scheduleAnchorAt`
+
+주의:
+
+- 반드시 `id + userId` 조건으로 전략을 찾습니다.
+- `active` 상태 전략을 수정할지, `draft/paused`만 수정할지 정책을 정해야 합니다.
+- 수정 후에도 `enabled=false`, `strategyStatus=draft` 정책을 유지할지 결정합니다.
+
+### 16.2 AI 구조화 API
+
+전략 수정 이후에는 자연어 prompt를 구조화하는 API를 붙입니다.
+
+추천 API:
+
+```http
+POST /strategies/:id/parse
+```
+
+초기 구현은 실제 LLM 없이 mock structured JSON으로 시작해도 됩니다.
+
+완료 기준:
+
+- `structuredStrategy`에 JSON 저장
+- 사용자가 구조화 결과를 검토할 수 있음
+- LLM output은 schema 검증을 통과해야 저장됨
+
+### 16.3 전략 활성화/비활성화 API
+
+AI 구조화 결과가 저장된 뒤 자동 실행을 켤 수 있게 합니다.
+
+추천 API:
+
+```http
+POST /strategies/:id/enable
+POST /strategies/:id/disable
+```
+
+활성화 조건:
+
+- 현재 사용자 소유 전략
+- `structuredStrategy` 존재
+- `intervalMinutes` 유효
+- `scheduleAnchorAt` 유효
+- `nextRunAt` 계산 가능
+
+### 16.4 작은 리팩토링
 
 우선순위가 높지는 않지만 다음 정리는 해두면 좋습니다.
 
+- `POST /strategies` 응답도 `StrategyResponseDto`로 변환하여 목록/상세와 일관성을 맞추기
 - `AuthService`의 `datasource` 필드명을 `dataSource`로 변경
 - `AuthService`가 계속 커지면 token 발급/검증을 `AuthTokenService`로 분리 검토
 - social login 공통 흐름이 더 커지면 `SocialLoginService` 분리 검토
 - `users.provider`, `users.provider_id`를 계속 유지할지 제거할지 결정
 
-### 15.3 테스트 보강
+### 16.5 테스트 보강
 
 현재 테스트는 매우 얇습니다. 다만 프론트/백엔드를 모두 해야 하므로 모든 테스트를 한 번에 작성할 필요는 없습니다.
 
@@ -794,8 +977,15 @@ psql -d agentrade -c "select id, user_id, revoked_at, expires_at from auth_sessi
 - `findOrCreateUserForSocialLogin`
   - 기존 social account 있으면 기존 user 반환
   - 같은 email user가 있으면 social account 연결
+- `StrategyService.findAllByUser`
+  - 사용자별 전략만 조회
+  - 페이지네이션 meta 계산
+  - market/status/mode/enabled 필터
+- `StrategyService.findOneByUser`
+  - 다른 사용자 전략 조회 차단
+  - 없는 전략 404
 
-### 15.4 Role Guard와 관리자 권한 API
+### 16.6 Role Guard와 관리자 권한 API
 
 인증 기반 다음 단계로는 관리자 권한 기반을 만드는 것이 좋습니다.
 
@@ -818,48 +1008,7 @@ PATCH /admin/users/:id/trading-permissions
 
 프론트 설정 화면은 거창한 설정 시스템보다 "특정 사용자의 권한을 올려주는 관리자 도구" 정도면 충분합니다.
 
-### 15.5 Strategy 도메인 시작
-
-관리자 권한 기반까지 잡히면 AI 투자 제품의 핵심인 전략 도메인으로 넘어갑니다.
-
-추천 테이블:
-
-```text
-strategies
-  id
-  user_id
-  name
-  natural_language_prompt
-  structured_strategy_json
-  market
-  symbol
-  time_frame
-  interval_minutes
-  enabled
-  last_run_at
-  next_run_at
-  failure_count
-  locked_until
-  created_at
-  updated_at
-```
-
-추천 API:
-
-```http
-POST /strategies
-GET /strategies
-GET /strategies/:id
-PATCH /strategies/:id
-DELETE /strategies/:id
-POST /strategies/:id/parse
-POST /strategies/:id/enable
-POST /strategies/:id/disable
-```
-
-처음에는 LLM 연동 없이 structured JSON mock 또는 수동 저장으로 시작해도 됩니다.
-
-## 16. 이후 큰 개발 로드맵
+## 17. 이후 큰 개발 로드맵
 
 ### Phase 1. Auth 안정화
 
@@ -932,7 +1081,7 @@ audit_logs
   created_at
 ```
 
-## 17. 이번 세션에서 다룬 학습 내용
+## 18. 이번 세션에서 다룬 학습 내용
 
 이번 세션은 사용자가 직접 백엔드 코드를 이해하고 작성하는 것을 목표로 진행했습니다. Codex는 전체 코드를 대신 완성하기보다, 구조 설명, 에러 원인 분석, 코드 리뷰, 다음 작업 순서 제안, 필요한 예시 제공을 중심으로 도왔습니다.
 
@@ -962,6 +1111,14 @@ audit_logs
 - Naver/Kakao OAuth 흐름
 - transaction과 unique constraint의 역할 차이
 - unique violation fallback을 두는 이유
+- Strategy 도메인 설계와 `StrategyEntity` 작성
+- TypeORM relation 저장 시 `user` 객체와 `userId` 저장 방식의 차이
+- `POST /strategies`, `GET /strategies`, `GET /strategies/:id` 구현
+- 사용자 소유 리소스를 `id + userId`로 조회해야 하는 이유
+- 공통 페이지네이션 DTO, meta helper, paginated result 타입 구성
+- 전략 목록 조회에서 filter DTO를 공통 pagination DTO에 확장하는 방식
+- `StrategyResponseDto`로 entity 응답을 분리하는 방식
+- Strategy API docs를 `strategy-api.docs.ts`로 분리하는 방식
 
 개발 원칙:
 

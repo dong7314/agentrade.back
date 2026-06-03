@@ -1,0 +1,80 @@
+import {
+  Get,
+  Body,
+  Post,
+  Param,
+  HttpCode,
+  UseGuards,
+  Controller,
+  HttpStatus,
+  ParseIntPipe,
+  Query,
+} from '@nestjs/common';
+import { ApiTags } from '@nestjs/swagger';
+
+import { JwtAuthGuard } from '@/auth/guards/jwt-auth.guard';
+
+import { CurrentUser } from '@/auth/decorators/current-user.decorator';
+
+import { StrategyService } from '../services/strategy.service';
+
+import {
+  ApiGetStrategy,
+  ApiGetStrategies,
+  ApiCreateStrategy,
+} from '../docs/strategy-api.docs';
+
+import { PaginatedResult } from '@/common/types/paginated.type';
+import { CreateStrategyDto } from '../dto/create-strategy.dto';
+import { StrategyResponseDto } from '../dto/strategy-response.dto';
+import { FindStrategiesQueryDto } from '../dto/find-strategy.query.dto';
+import type { AuthenticatedUser } from '@/auth/types/authenticated-user.type';
+
+@ApiTags('strategies')
+@Controller('strategies')
+export class StrategyController {
+  constructor(private readonly strategyService: StrategyService) {}
+
+  @Get()
+  @UseGuards(JwtAuthGuard)
+  @ApiGetStrategies()
+  async getStrategies(
+    @Query() query: FindStrategiesQueryDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<PaginatedResult<StrategyResponseDto>> {
+    const result = await this.strategyService.findAllByUser(user.id, query);
+
+    return {
+      items: StrategyResponseDto.fromEntities(result.items),
+      meta: result.meta,
+    };
+  }
+
+  @Get(':id')
+  @UseGuards(JwtAuthGuard)
+  @ApiGetStrategy()
+  async getDetailStrategy(
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<StrategyResponseDto> {
+    const strategy = await this.strategyService.findOneByUser(id, user.id);
+
+    return StrategyResponseDto.fromEntity(strategy);
+  }
+
+  @Post()
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(JwtAuthGuard)
+  @ApiCreateStrategy()
+  async create(
+    @Body() dto: CreateStrategyDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<StrategyResponseDto> {
+    const strategy = await this.strategyService.create({
+      userId: user.id,
+      ...dto,
+    });
+
+    return StrategyResponseDto.fromEntity(strategy);
+  }
+}

@@ -21,21 +21,20 @@ import {
   ApiLocalLogin,
   ApiRefreshToken,
   ApiLocalRegister,
-  ApiKakaoCallback,
-  ApiRedirectKakao,
-  ApiNaverCallback,
-  ApiRedirectNaver,
 } from '../docs/auth-api.docs';
+import { ApiNaverCallback, ApiRedirectNaver } from '../docs/naver-api.docs';
+import { ApiKakaoCallback, ApiRedirectKakao } from '../docs/kakao-api.docs';
+
 import {
-  createAccessClearCookieOptions,
   createAccessCookieOptions,
-  createRefreshClearCookieOptions,
   createRefreshCookieOptions,
+  createAccessClearCookieOptions,
+  createRefreshClearCookieOptions,
 } from '../cookies/cookie.options';
 import {
+  extractRefreshTokenFromCookie,
   extractKakaoOAuthStateFromCookie,
   extractNaverOAuthStateFromCookie,
-  extractRefreshTokenFromCookie,
 } from '../cookies/auth-cookie.extractor';
 
 import { AuthService } from '../services/auth.service';

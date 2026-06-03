@@ -2,15 +2,16 @@ import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule, type TypeOrmModuleOptions } from '@nestjs/typeorm';
 
-import { AuthModule } from './auth/auth.module';
-import { UserModule } from './user/user.module';
+import { validateEnv } from './config/env.validation';
+import { databaseConfig } from './config/database.config';
 
 import { AppController } from './app.controller';
 
 import { AppService } from './app.service';
 
-import { validateEnv } from './config/env.validation';
-import { databaseConfig } from './config/database.config';
+import { AuthModule } from './auth/auth.module';
+import { UserModule } from './user/user.module';
+import { StrategyModule } from './strategy/strategy.module';
 
 @Module({
   imports: [
@@ -35,6 +36,7 @@ import { databaseConfig } from './config/database.config';
     }),
     AuthModule,
     UserModule,
+    StrategyModule,
   ],
   controllers: [AppController],
   providers: [AppService],
