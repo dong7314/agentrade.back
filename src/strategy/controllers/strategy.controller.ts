@@ -3,12 +3,13 @@ import {
   Body,
   Post,
   Param,
+  Query,
+  Patch,
   HttpCode,
   UseGuards,
   Controller,
   HttpStatus,
   ParseIntPipe,
-  Query,
 } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 
@@ -22,6 +23,7 @@ import {
   ApiGetStrategy,
   ApiGetStrategies,
   ApiCreateStrategy,
+  ApiUpdateStrategy,
 } from '../docs/strategy-api.docs';
 
 import { PaginatedResult } from '@/common/types/paginated.type';
@@ -29,6 +31,7 @@ import { CreateStrategyDto } from '../dto/create-strategy.dto';
 import { StrategyResponseDto } from '../dto/strategy-response.dto';
 import { FindStrategiesQueryDto } from '../dto/find-strategy.query.dto';
 import type { AuthenticatedUser } from '@/auth/types/authenticated-user.type';
+import { UpdateStrategyDto } from '../dto/update-strategy.dto';
 
 @ApiTags('strategies')
 @Controller('strategies')
@@ -72,6 +75,24 @@ export class StrategyController {
   ): Promise<StrategyResponseDto> {
     const strategy = await this.strategyService.create({
       userId: user.id,
+      ...dto,
+    });
+
+    return StrategyResponseDto.fromEntity(strategy);
+  }
+
+  @Patch(':id')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(JwtAuthGuard)
+  @ApiUpdateStrategy()
+  async update(
+    @Body() dto: UpdateStrategyDto,
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<StrategyResponseDto> {
+    const strategy = await this.strategyService.update({
+      userId: user.id,
+      strategyId: id,
       ...dto,
     });
 

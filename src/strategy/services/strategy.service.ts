@@ -1,9 +1,14 @@
 import { Repository } from 'typeorm';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  BadRequestException,
+} from '@nestjs/common';
 
 import { UserService } from '@/user/services/user.service';
 
+import { StrategyStatus } from '../enums/strategy-status.enum';
 import { StrategyEntity } from '../entities/strategy.entity';
 import { PaginatedResult } from '@/common/types/paginated.type';
 import { createPaginationMeta } from '@/common/utils/create-pagination-meta';
@@ -45,7 +50,7 @@ export class StrategyService {
     };
   }
 
-  // 특정 전략을 찾는 메서드
+  // 사용자 및 아이디를 통해 특정 전략을 찾는 메서드
   async findOneByUser(id: number, userId: number): Promise<StrategyEntity> {
     const strategy = await this.strategyRepository.findOne({
       where: {
@@ -84,6 +89,36 @@ export class StrategyService {
       intervalMinutes: input.intervalMinutes,
       scheduleAnchorAt: new Date(input.scheduleAnchorAt),
     });
+
+    return this.strategyRepository.save(strategy);
+  }
+
+  // 전략 업데이트
+  async update(input: {
+    userId: number;
+    strategyId: number;
+    name?: string;
+    market?: string;
+    prompt?: string;
+    intervalMinutes?: number;
+    scheduleAnchorAt?: string;
+  }): Promise<StrategyEntity> {
+    const strategy = await this.findOneByUser(input.strategyId, input.userId);
+
+    if (strategy.enabled || strategy.strategyStatus === StrategyStatus.ACTIVE) {
+      throw new BadRequestException(
+        '활성화된 전략은 일시정지 후 수정할 수 있습니다.',
+      );
+    }
+
+    strategy.name = input.name ?? strategy.name;
+    strategy.market = input.market ?? strategy.market;
+    strategy.prompt = input.prompt ?? strategy.prompt;
+    strategy.intervalMinutes =
+      input.intervalMinutes ?? strategy.intervalMinutes;
+    strategy.scheduleAnchorAt = input.scheduleAnchorAt
+      ? new Date(input.scheduleAnchorAt)
+      : strategy.scheduleAnchorAt;
 
     return this.strategyRepository.save(strategy);
   }
