@@ -105,6 +105,10 @@ export class StrategyService {
   }): Promise<StrategyEntity> {
     const strategy = await this.findOneByUser(input.strategyId, input.userId);
 
+    if (strategy.strategyStatus === StrategyStatus.ARCHIVED) {
+      throw new BadRequestException('보관된 전략은 수정할 수 없습니다.');
+    }
+
     if (strategy.enabled || strategy.strategyStatus === StrategyStatus.ACTIVE) {
       throw new BadRequestException(
         '활성화된 전략은 일시정지 후 수정할 수 있습니다.',
@@ -121,5 +125,103 @@ export class StrategyService {
       : strategy.scheduleAnchorAt;
 
     return this.strategyRepository.save(strategy);
+  }
+
+  // 전략 상태 업데이트 진행
+  async updateStatus(input: {
+    userId: number;
+    strategyId: number;
+    strategyStatus: StrategyStatus;
+  }): Promise<StrategyEntity> {
+    const strategy = await this.findOneByUser(input.strategyId, input.userId);
+
+    if (strategy.strategyStatus === input.strategyStatus) {
+      return strategy;
+    }
+
+    if (strategy.strategyStatus === StrategyStatus.ARCHIVED) {
+      throw new BadRequestException('보관된 전략은 상태를 변경할 수 없습니다.');
+    }
+
+    switch (input.strategyStatus) {
+      case StrategyStatus.ACTIVE:
+        this.activateStrategy(strategy);
+        break;
+
+      case StrategyStatus.PAUSED:
+        this.pauseStrategy(strategy);
+        break;
+
+      case StrategyStatus.ARCHIVED:
+        this.archiveStrategy(strategy);
+        break;
+
+      case StrategyStatus.DRAFT:
+        throw new BadRequestException(
+          '전략은 draft 상태로 되돌릴 수 없습니다.',
+        );
+    }
+
+    return this.strategyRepository.save(strategy);
+  }
+
+  // 다음 전략 실행 시점을 계산하는 로직
+  private calculateNextRunAt(
+    scheduleAnchorAt: Date,
+    intervalMinutes: number,
+  ): Date {
+    const now = new Date();
+
+    if (scheduleAnchorAt > now) {
+      return scheduleAnchorAt;
+    }
+
+    const intervalMs = intervalMinutes * 60 * 1000;
+    const elapsedMs = now.getTime() - scheduleAnchorAt.getTime();
+    const elapsedIntervals = Math.floor(elapsedMs / intervalMs);
+
+    return new Date(
+      scheduleAnchorAt.getTime() + (elapsedIntervals + 1) * intervalMs,
+    );
+  }
+
+  // active 상태로 전략 상태 변경
+  private activateStrategy(strategy: StrategyEntity): void {
+    if (!strategy.structuredStrategy) {
+      throw new BadRequestException(
+        '구조화되지 않은 전략은 활성화할 수 없습니다.',
+      );
+    }
+
+    strategy.strategyStatus = StrategyStatus.ACTIVE;
+    strategy.enabled = true;
+    strategy.nextRunAt = this.calculateNextRunAt(
+      strategy.scheduleAnchorAt,
+      strategy.intervalMinutes,
+    );
+  }
+
+  // pause 상태로 전략 상태 변경
+  private pauseStrategy(strategy: StrategyEntity): void {
+    if (strategy.strategyStatus === StrategyStatus.DRAFT) {
+      throw new BadRequestException('초안 전략은 일시정지할 수 없습니다.');
+    }
+
+    strategy.strategyStatus = StrategyStatus.PAUSED;
+    strategy.enabled = false;
+    strategy.nextRunAt = null;
+  }
+
+  // archive 상태로 전략 변경
+  private archiveStrategy(strategy: StrategyEntity): void {
+    if (strategy.strategyStatus === StrategyStatus.ACTIVE) {
+      throw new BadRequestException(
+        '활성화된 전략은 일시정지 후 보관할 수 있습니다.',
+      );
+    }
+
+    strategy.strategyStatus = StrategyStatus.ARCHIVED;
+    strategy.enabled = false;
+    strategy.nextRunAt = null;
   }
 }

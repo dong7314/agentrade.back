@@ -1,16 +1,20 @@
 # Agentrade Backend Plan
 
-최종 업데이트: 2026-06-04
+최종 업데이트: 2026-06-14
 
 이 문서는 `backend` 폴더에서 현재까지 어디까지 개발했는지, 이번 세션에서 어떤 방식으로 학습/개발을 진행했는지, 다른 컴퓨터에서 이어서 작업할 때 무엇부터 확인하면 되는지 정리한 인수인계 문서입니다.
 
-현재 백엔드는 NestJS + TypeORM + PostgreSQL + Scalar 기반으로 로컬 회원가입/로그인, 쿠키 기반 access/refresh token, DB 세션, Naver/Kakao OAuth 로그인, 전략 생성/목록/상세/수정 흐름까지 1차 구현된 상태입니다.
+현재 백엔드는 NestJS + TypeORM + PostgreSQL + Scalar 기반으로 로컬 회원가입/로그인, 쿠키 기반 access/refresh token, DB 세션, Naver/Kakao OAuth 로그인, 전략 생성/목록/상세/수정/상태 변경 흐름까지 1차 구현된 상태입니다.
 
-2026-06-04 현재 중요한 진행 상태:
+2026-06-14 현재 중요한 진행 상태:
 
 - `PATCH /strategies/:id` 전략 수정 API까지 구현했습니다.
 - 전략 수정은 `enabled=true`이거나 `strategyStatus=active`인 경우 막도록 1차 정책을 넣었습니다.
-- 아직 `PATCH /strategies/:id/status` 상태 변경 API는 만들지 않았습니다.
+- `PATCH /strategies/:id/status` 전략 상태 변경 API까지 구현했습니다.
+- 상태 변경은 `draft/paused -> active`, `active -> paused`, `draft/paused -> archived` 중심으로 처리합니다.
+- `active` 전환은 `structuredStrategy`가 있어야 가능하도록 막았습니다.
+- `active -> archived`는 바로 허용하지 않고 먼저 `paused`로 바꾸도록 막았습니다.
+- `archived` 전략은 일반 수정과 상태 변경을 막도록 했습니다.
 - 아직 AI 전략 구조화, scheduler worker, LangGraph 실행 run, k3s job/pod 실행 구조는 만들지 않았습니다.
 
 ## 1. 프로젝트 방향
@@ -271,7 +275,8 @@ src
     │   ├── create-strategy.dto.ts
     │   ├── find-strategy.query.dto.ts
     │   ├── strategy-response.dto.ts
-    │   └── update-strategy.dto.ts
+    │   ├── update-strategy.dto.ts
+    │   └── update-strategy-status.dto.ts
     ├── entities
     │   └── strategy.entity.ts
     ├── enums
@@ -617,7 +622,7 @@ GET /auth/kakao/callback
 
 ## 12. Strategy 도메인
 
-2026-06-04 기준 전략 도메인은 생성/목록/상세/수정까지 구현했습니다.
+2026-06-14 기준 전략 도메인은 생성/목록/상세/수정/상태 변경까지 구현했습니다.
 
 현재 구현된 API:
 
@@ -625,12 +630,17 @@ GET /auth/kakao/callback
 - `GET /strategies`
 - `GET /strategies/:id`
 - `PATCH /strategies/:id`
+- `PATCH /strategies/:id/status`
 
 아직 구현하지 않은 API:
 
-- `PATCH /strategies/:id/status`
 - `POST /strategies/:id/parse`
-- `DELETE /strategies/:id` 또는 archive 처리 API
+- `DELETE /strategies/:id`
+
+참고:
+
+- 삭제 대신 보관하는 1차 흐름은 `PATCH /strategies/:id/status`에서 `strategyStatus=archived`로 처리합니다.
+- 실제 hard delete API를 만들지는 아직 결정하지 않았습니다.
 
 현재 전략 생성 입력:
 
@@ -657,14 +667,49 @@ GET /auth/kakao/callback
 - `intervalMinutes`
 - `scheduleAnchorAt`
 
+현재 전략 상태 변경 입력:
+
+- `strategyStatus`
+
+현재 전략 상태 변경 DTO:
+
+- `src/strategy/dto/update-strategy-status.dto.ts`
+- `@IsEnum(StrategyStatus)`로 `draft`, `active`, `paused`, `archived` 외의 값은 validation 단계에서 거절합니다.
+
 현재 전략 수정 정책:
 
 - 반드시 `id + userId` 조건으로 전략을 조회합니다.
 - 다른 사용자의 전략은 수정할 수 없습니다.
+- `strategyStatus=archived`인 전략은 수정할 수 없습니다.
 - `enabled=true`인 전략은 수정할 수 없습니다.
 - `strategyStatus=active`인 전략은 수정할 수 없습니다.
 - 수정이 가능한 상태에서 전달된 필드만 부분 업데이트합니다.
 - `scheduleAnchorAt`은 DTO에서 string으로 받고, service에서 `Date`로 변환해 저장합니다.
+
+현재 전략 상태 변경 정책:
+
+- 반드시 `id + userId` 조건으로 전략을 조회합니다.
+- 같은 상태로 변경 요청이 들어오면 no-op으로 처리하고 현재 전략을 반환합니다.
+- `archived` 상태의 전략은 다른 상태로 변경할 수 없습니다.
+- `draft/paused -> active`
+  - `structuredStrategy`가 없으면 400을 반환합니다.
+  - `structuredStrategy`가 있으면 `strategyStatus=active`, `enabled=true`, `nextRunAt=다음 실행 시각`으로 저장합니다.
+- `active -> paused`
+  - `strategyStatus=paused`, `enabled=false`, `nextRunAt=null`로 저장합니다.
+- `draft/paused -> archived`
+  - `strategyStatus=archived`, `enabled=false`, `nextRunAt=null`로 저장합니다.
+- `active -> archived`
+  - 바로 허용하지 않고 400을 반환합니다.
+  - 먼저 `paused` 상태로 바꾼 뒤 `archived`로 바꾸는 흐름을 권장합니다.
+- `draft -> paused`
+  - 초안은 이미 비활성 상태이므로 400을 반환합니다.
+- `* -> draft`
+  - draft로 되돌리는 것은 허용하지 않습니다.
+
+`nextRunAt` 계산 정책:
+
+- 현재 시간이 `scheduleAnchorAt`보다 이전이면 `nextRunAt=scheduleAnchorAt`으로 설정합니다.
+- 현재 시간이 이미 `scheduleAnchorAt`을 지났으면 `intervalMinutes` 단위로 다음 실행 시각을 계산합니다.
 
 이 정책의 의도:
 
@@ -699,11 +744,12 @@ deleted_at
 - 전략은 반드시 로그인 사용자에게 귀속됩니다.
 - 상세 조회는 `id + userId` 조건으로 조회하여 다른 사용자의 전략 접근을 막습니다.
 - 수정도 `id + userId` 조건으로 조회하여 다른 사용자의 전략 변경을 막습니다.
+- 상태 변경도 `id + userId` 조건으로 조회하여 다른 사용자의 전략 상태 변경을 막습니다.
 - 목록 조회는 현재 사용자 전략만 반환합니다.
 - 목록 조회는 공통 페이지네이션 응답을 사용합니다.
 - `market`, `strategyStatus`, `strategyMode`, `enabled` 필터를 지원합니다.
 - entity를 그대로 노출하지 않기 위해 `StrategyResponseDto`를 추가했습니다.
-- create/detail/update 응답은 `StrategyResponseDto`로 반환합니다.
+- create/detail/update/status 응답은 `StrategyResponseDto`로 반환합니다.
 - list 응답은 `PaginatedResult<StrategyResponseDto>` 형태입니다.
 
 공통 페이지네이션 파일:
@@ -736,9 +782,10 @@ GET /strategies?page=1&limit=15&market=KRW-BTC&strategyStatus=draft&strategyMode
 
 현재 남은 정리 포인트:
 
-- 실제 Scalar에서 전략 생성/목록/상세/수정을 한 번 더 수동 확인하면 좋습니다.
-- `PATCH /strategies/:id/status`를 추가해 status 변경과 `enabled`, `nextRunAt` 계산을 한 곳에서 처리해야 합니다.
-- `active` 전환 전에 `structuredStrategy`가 반드시 있어야 하는 정책을 넣을지 결정해야 합니다.
+- 실제 Scalar에서 전략 생성/목록/상세/수정/상태 변경을 한 번 더 수동 확인하면 좋습니다.
+- 현재는 `POST /strategies/:id/parse`가 없어서 대부분의 전략은 `structuredStrategy=null`입니다.
+- 따라서 지금 `strategyStatus=active` 변경 요청이 400을 반환하는 것은 정상 정책입니다.
+- 다음 단계에서 mock AI 구조화 API를 만들어 `structuredStrategy`를 채우면 active 전환 성공 흐름을 확인할 수 있습니다.
 - scheduler/run 테이블이 생기면 실제 실행 중인 전략 수정 차단을 `run_status` 기준으로 보강해야 합니다.
 
 ## 13. 현재 검증 완료 상태
@@ -751,7 +798,7 @@ pnpm exec eslint "src/**/*.ts"
 pnpm exec jest --runInBand
 ```
 
-위 명령은 2026-06-04 기준 통과했습니다.
+위 명령은 2026-06-14 기준 통과했습니다.
 
 서버 부팅 확인:
 
@@ -777,6 +824,18 @@ pnpm start
 
 2026-06-04 기준 코드 정적 검증에서 `PATCH /strategies/:id` 업데이트 흐름도 통과했습니다. 단, 서버 route 매핑 로그는 필요 시 `pnpm start:dev`로 다시 확인하면 됩니다.
 
+2026-06-14 기준 코드 정적 검증에서 `PATCH /strategies/:id/status` 상태 변경 흐름도 통과했습니다.
+
+확인한 명령:
+
+```bash
+pnpm exec tsc --noEmit
+pnpm exec eslint "src/strategy/**/*.ts"
+pnpm exec jest --runInBand
+```
+
+현재 Jest는 기본 spec 중심이라 상태 변경 정책을 직접 검증하는 테스트는 아직 없습니다. 다음 단계에서 `StrategyService.updateStatus` 단위 테스트를 추가하면 좋습니다.
+
 Scalar로 이미 확인한 흐름:
 
 - `POST /auth/register`
@@ -801,8 +860,12 @@ Scalar로 이미 확인한 흐름:
 - `GET /strategies`
 - `GET /strategies/:id`
 - `PATCH /strategies/:id`
+- `PATCH /strategies/:id/status`
 - 전략 목록 필터 및 페이지네이션 query
 - `enabled=true` 또는 `strategyStatus=active`인 전략 수정 시 400 응답 확인
+- `structuredStrategy=null`인 전략을 `active`로 바꾸려고 할 때 400 응답 확인
+- `draft/paused` 전략을 `archived`로 바꿀 때 `enabled=false`, `nextRunAt=null`이 되는지 확인
+- `active` 전략을 바로 `archived`로 바꾸려고 할 때 400 응답 확인
 
 ## 14. 다른 컴퓨터에서 이어서 작업할 때
 
@@ -911,8 +974,11 @@ pnpm start:dev
 2. `GET /strategies`
 3. `GET /strategies/:id`
 4. `PATCH /strategies/:id`
-5. `GET /strategies?page=1&limit=15&market=KRW-BTC&strategyStatus=draft&strategyMode=paper&enabled=false`
-6. `enabled=true` 또는 `strategyStatus=active`인 전략을 수정하려고 할 때 400이 반환되는지 확인
+5. `PATCH /strategies/:id/status`
+6. `GET /strategies?page=1&limit=15&market=KRW-BTC&strategyStatus=draft&strategyMode=paper&enabled=false`
+7. `enabled=true` 또는 `strategyStatus=active`인 전략을 수정하려고 할 때 400이 반환되는지 확인
+8. `structuredStrategy=null`인 전략을 `active`로 바꾸려고 할 때 400이 반환되는지 확인
+9. `draft/paused` 전략을 `archived`로 바꿀 때 `enabled=false`, `nextRunAt=null`이 되는지 확인
 
 DB 확인:
 
@@ -936,96 +1002,9 @@ psql -d agentrade -c "select id, user_id, name, market, strategy_mode, strategy_
 
 현재 코드 기준으로 다음 작업은 아래 순서가 좋습니다.
 
-### 16.1 전략 상태 변경 API
+### 16.1 AI 구조화 API
 
-다음으로는 전략의 lifecycle을 바꾸는 API를 만드는 것이 좋습니다.
-
-추천 API:
-
-```http
-PATCH /strategies/:id/status
-```
-
-추천 body:
-
-```json
-{
-  "strategyStatus": "active"
-}
-```
-
-이 API를 `PATCH /strategies/:id`와 분리하는 이유:
-
-- 일반 수정 API는 name, market, prompt, interval 같은 "전략 내용"을 수정합니다.
-- 상태 변경 API는 active, paused, archived 같은 "전략 실행 상태"를 바꿉니다.
-- active 전환 시 `enabled`, `nextRunAt`, `structuredStrategy` 검증 같은 별도 규칙이 필요합니다.
-- 나중에 scheduler/run lock이 붙어도 상태 변경 규칙을 한 곳에 모을 수 있습니다.
-
-추천 파일:
-
-- `src/strategy/dto/update-strategy-status.dto.ts`
-- `src/strategy/controllers/strategy.controller.ts`
-- `src/strategy/services/strategy.service.ts`
-- `src/strategy/docs/strategy-api.docs.ts`
-
-추천 DTO:
-
-```ts
-export class UpdateStrategyStatusDto {
-  @IsEnum(StrategyStatus)
-  @ApiProperty({
-    enum: StrategyStatus,
-    example: StrategyStatus.ACTIVE,
-    description: '변경할 전략 상태',
-  })
-  strategyStatus!: StrategyStatus;
-}
-```
-
-추천 service method:
-
-```ts
-async updateStatus(input: {
-  userId: number;
-  strategyId: number;
-  strategyStatus: StrategyStatus;
-}): Promise<StrategyEntity> {
-  const strategy = await this.findOneByUser(input.strategyId, input.userId);
-
-  // status별 정책 분기
-  // active: 활성화 조건 검증, enabled=true, nextRunAt 계산
-  // paused: enabled=false
-  // archived: enabled=false, nextRunAt=null
-
-  return this.strategyRepository.save(strategy);
-}
-```
-
-초기 상태 변경 정책 추천:
-
-- `draft -> active`
-  - 현재는 `structuredStrategy`가 아직 없으므로 바로 허용하지 않거나, 임시로 mock parse 전까지 보류합니다.
-  - 실전 정책은 `structuredStrategy`가 있어야 active 가능하게 두는 것이 좋습니다.
-- `draft -> paused`
-  - 굳이 필요하지 않습니다. 초안은 이미 비활성 상태입니다.
-- `active -> paused`
-  - 허용합니다.
-  - `enabled=false`
-  - `nextRunAt=null` 또는 유지 중 하나를 선택합니다. 초기에는 `null` 추천입니다.
-- `paused -> active`
-  - 허용하되 active 조건을 다시 검증합니다.
-- `draft/paused -> archived`
-  - 허용합니다.
-  - `enabled=false`
-  - `nextRunAt=null`
-- `active -> archived`
-  - 바로 허용하지 말고 먼저 pause 후 archive하게 하는 것이 안전합니다.
-
-아직 run 테이블이 없으므로 "실제로 지금 실행 중인가"는 확인할 수 없습니다. 지금은 `enabled`와 `strategyStatus` 기준 정책만 둡니다.
-
-### 16.2 AI 구조화 API
-
-전략 수정 이후에는 자연어 prompt를 구조화하는 API를 붙입니다.
+다음으로는 자연어 prompt를 구조화하는 API를 붙이는 것이 좋습니다.
 
 추천 API:
 
@@ -1035,13 +1014,48 @@ POST /strategies/:id/parse
 
 초기 구현은 실제 LLM 없이 mock structured JSON으로 시작해도 됩니다.
 
+이 API가 필요한 이유:
+
+- 현재 `PATCH /strategies/:id/status`는 `structuredStrategy`가 없으면 `active` 전환을 막습니다.
+- 사용자가 작성한 `prompt`는 자연어라 scheduler가 그대로 실행하기 어렵습니다.
+- `parse` API가 자연어 전략을 실행 가능한 JSON 구조로 바꿔 `structuredStrategy`에 저장해야 합니다.
+- mock 구조화부터 시작하면 LLM 연동 전에도 상태 변경과 scheduler 준비 흐름을 검증할 수 있습니다.
+
+추천 파일:
+
+- `src/strategy/dto/parse-strategy-response.dto.ts` 또는 기존 `StrategyResponseDto` 재사용
+- `src/strategy/controllers/strategy.controller.ts`
+- `src/strategy/services/strategy.service.ts`
+- `src/strategy/docs/strategy-api.docs.ts`
+
 완료 기준:
 
 - `structuredStrategy`에 JSON 저장
 - 사용자가 구조화 결과를 검토할 수 있음
 - LLM output은 schema 검증을 통과해야 저장됨
+- parse 이후 `PATCH /strategies/:id/status`에서 `strategyStatus=active` 전환이 성공함
 
-### 16.3 전략 활성화/비활성화 정책
+초기 mock structured JSON 예:
+
+```json
+{
+  "version": 1,
+  "entryRules": [],
+  "exitRules": [],
+  "riskRules": [],
+  "positionSizing": {
+    "type": "fixed_fraction",
+    "value": 0.1
+  }
+}
+```
+
+주의:
+
+- 지금은 mock JSON을 저장하더라도, 나중에는 LLM 응답 schema 검증 계층을 반드시 둬야 합니다.
+- `structuredStrategy`가 비어 있는 `{}`만으로 active를 허용할지, 최소 필수 키를 요구할지는 parse API를 만들 때 결정합니다.
+
+### 16.2 전략 활성화 성공 흐름 수동 확인
 
 AI 구조화 결과가 저장된 뒤 자동 실행을 켤 수 있게 합니다. 별도 `enable/disable` API를 만들기보다는 우선 `PATCH /strategies/:id/status`에서 상태별로 처리하는 방향을 추천합니다.
 
@@ -1075,6 +1089,31 @@ strategyStatus=archived
 - 현재 시간이 이미 지났으면 `intervalMinutes` 단위로 다음 실행 시간을 계산
 
 정확한 시간 계산은 scheduler worker를 붙일 때 다시 다듬습니다.
+
+확인할 흐름:
+
+1. `POST /strategies`로 초안 전략 생성
+2. `POST /strategies/:id/parse`로 mock `structuredStrategy` 저장
+3. `PATCH /strategies/:id/status` body `{ "strategyStatus": "active" }`
+4. 응답에서 `strategyStatus=active`, `enabled=true`, `nextRunAt` 값 확인
+5. 다시 `PATCH /strategies/:id/status` body `{ "strategyStatus": "paused" }`
+6. 응답에서 `strategyStatus=paused`, `enabled=false`, `nextRunAt=null` 확인
+
+### 16.3 Strategy 상태 변경 테스트 보강
+
+상태 변경 정책은 앞으로 scheduler와 주문 실행의 안전장치가 되므로 최소 단위 테스트를 붙이는 것이 좋습니다.
+
+우선 추천하는 테스트:
+
+- `StrategyService.updateStatus`
+  - `structuredStrategy=null`이면 active 전환 400
+  - `structuredStrategy`가 있으면 active 전환 성공
+  - active 전환 시 `enabled=true`, `nextRunAt` 계산
+  - active 전략을 paused로 바꾸면 `enabled=false`, `nextRunAt=null`
+  - active 전략을 바로 archived로 바꾸면 400
+  - draft/paused 전략을 archived로 바꾸면 `enabled=false`, `nextRunAt=null`
+  - archived 전략은 다른 상태로 변경 불가
+  - 같은 상태 요청은 no-op으로 반환
 
 ### 16.4 작은 리팩토링
 
@@ -1112,6 +1151,12 @@ strategyStatus=archived
 - `StrategyService.findOneByUser`
   - 다른 사용자 전략 조회 차단
   - 없는 전략 404
+- `StrategyService.updateStatus`
+  - 구조화되지 않은 전략 active 전환 400
+  - 구조화된 전략 active 전환 성공
+  - paused 전환 시 `enabled=false`, `nextRunAt=null`
+  - active 전략의 직접 archived 전환 400
+  - archived 전략 상태 변경 차단
 
 ### 16.6 Role Guard와 관리자 권한 API
 
@@ -1253,6 +1298,13 @@ audit_logs
 - active/enabled 전략은 수정 전에 일시정지하도록 막는 1차 정책
 - 실제 실행 중인 run을 막는 것은 `strategy_runs` 또는 `graph_runs` 테이블이 생긴 뒤 보강하는 것이 좋다는 점
 - 상태 변경은 `PATCH /strategies/:id/status`처럼 일반 수정 API와 분리하는 것이 좋다는 점
+- `PATCH /strategies/:id/status` 상태 변경 API 구현
+- `UpdateStrategyStatusDto`에서 `@IsEnum(StrategyStatus)`로 요청 body를 검증해야 한다는 점
+- `ApiUpdateStrategyStatus()` 문서 decorator를 분리해 Scalar에서 일반 수정 API와 상태 변경 API를 구분하는 방식
+- `strategyStatus`, `enabled`, `nextRunAt`의 역할 차이
+- `active` 전환 전에 `structuredStrategy`를 요구하는 이유
+- `active -> archived`를 직접 막고 `paused -> archived` 흐름을 권장하는 이유
+- `nextRunAt`을 `scheduleAnchorAt`과 `intervalMinutes` 기준으로 계산하는 초기 방식
 
 개발 원칙:
 

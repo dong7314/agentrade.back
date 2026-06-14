@@ -12,6 +12,7 @@ import {
 } from '@nestjs/swagger';
 
 import { UpdateStrategyDto } from '../dto/update-strategy.dto';
+import { UpdateStrategyStatusDto } from '../dto/update-strategy-status.dto';
 
 const strategyExample = {
   id: 1,
@@ -188,6 +189,66 @@ export function ApiUpdateStrategy() {
     ApiBadRequestResponse({
       description:
         '요청 값이 유효하지 않습니다. market, intervalMinutes, scheduleAnchorAt 형식을 확인해야 합니다.',
+    }),
+    ApiUnauthorizedResponse({
+      description: 'access_token 쿠키가 없거나 유효하지 않습니다.',
+    }),
+    ApiNotFoundResponse({
+      description: '전략이 존재하지 않거나 현재 사용자의 전략이 아닙니다.',
+    }),
+  );
+}
+
+export function ApiUpdateStrategyStatus() {
+  return applyDecorators(
+    ApiCookieAuth('access_token'),
+    ApiOperation({
+      summary: '전략 상태 변경',
+      description:
+        '로그인 사용자의 특정 전략 상태를 변경합니다. active 전환 시 자동 실행 대상으로 등록되고, paused 또는 archived 전환 시 자동 실행 대상에서 제외됩니다.',
+    }),
+    ApiParam({
+      name: 'id',
+      example: 1,
+      description: '상태를 변경할 전략 ID입니다.',
+    }),
+    ApiBody({
+      type: UpdateStrategyStatusDto,
+      description: '변경할 전략 상태입니다.',
+      examples: {
+        active: {
+          summary: '전략 활성화',
+          value: { strategyStatus: 'active' },
+        },
+        paused: {
+          summary: '전략 일시정지',
+          value: { strategyStatus: 'paused' },
+        },
+        archived: {
+          summary: '전략 보관',
+          value: { strategyStatus: 'archived' },
+        },
+      },
+    }),
+    ApiOkResponse({
+      description: '전략 상태 변경 성공',
+      schema: {
+        example: {
+          ...strategyExample,
+          enabled: true,
+          strategyStatus: 'active',
+          nextRunAt: '2026-06-02T02:00:00.000Z',
+          structuredStrategy: {
+            entryRules: [],
+            riskRules: [],
+          },
+          updatedAt: '2026-06-02T01:10:00.000Z',
+        },
+      },
+    }),
+    ApiBadRequestResponse({
+      description:
+        '요청 상태가 유효하지 않거나, 현재 상태에서 변경할 수 없습니다. 구조화되지 않은 전략은 active로 변경할 수 없고, 활성화된 전략은 일시정지 후 보관해야 합니다.',
     }),
     ApiUnauthorizedResponse({
       description: 'access_token 쿠키가 없거나 유효하지 않습니다.',
