@@ -25,15 +25,16 @@ import {
   ApiCreateStrategy,
   ApiUpdateStrategy,
   ApiUpdateStrategyStatus,
+  ApiParseStrategy,
 } from '../docs/strategy-api.docs';
 
 import { PaginatedResult } from '@/common/types/paginated.type';
 import { CreateStrategyDto } from '../dto/create-strategy.dto';
+import { UpdateStrategyDto } from '../dto/update-strategy.dto';
 import { StrategyResponseDto } from '../dto/strategy-response.dto';
 import { FindStrategiesQueryDto } from '../dto/find-strategy.query.dto';
-import type { AuthenticatedUser } from '@/auth/types/authenticated-user.type';
-import { UpdateStrategyDto } from '../dto/update-strategy.dto';
 import { UpdateStrategyStatusDto } from '../dto/update-strategy-status.dto';
+import type { AuthenticatedUser } from '@/auth/types/authenticated-user.type';
 
 @ApiTags('strategies')
 @Controller('strategies')
@@ -114,6 +115,22 @@ export class StrategyController {
       userId: user.id,
       strategyId: id,
       ...dto,
+    });
+
+    return StrategyResponseDto.fromEntity(strategy);
+  }
+
+  @Post(':id/parse')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(JwtAuthGuard)
+  @ApiParseStrategy()
+  async parse(
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<StrategyResponseDto> {
+    const strategy = await this.strategyService.parse({
+      userId: user.id,
+      strategyId: id,
     });
 
     return StrategyResponseDto.fromEntity(strategy);

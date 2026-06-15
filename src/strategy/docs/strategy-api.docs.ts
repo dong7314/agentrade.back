@@ -239,8 +239,44 @@ export function ApiUpdateStrategyStatus() {
           strategyStatus: 'active',
           nextRunAt: '2026-06-02T02:00:00.000Z',
           structuredStrategy: {
-            entryRules: [],
-            riskRules: [],
+            version: 1,
+            kind: 'ai_execution_plan',
+            source: {
+              prompt:
+                '비트코인이 단기 이동평균선 위에 있고 거래량이 증가할 때만 가상 매수하고 싶어요.',
+              market: 'KRW-BTC',
+            },
+            aiInstructions: {
+              summary:
+                '사용자의 자연어 전략을 기반으로 안전한 투자 판단을 수행한다.',
+              decisionProcess: [
+                '시장 뉴스와 거시 이벤트를 확인한다.',
+                '지지/저항 구간과 주요 가격 흐름을 확인한다.',
+                '근거가 부족하면 매매하지 않는다.',
+                '과도한 레버리지와 올인을 피한다.',
+                '수익 구간에서는 분할 익절을 고려한다.',
+              ],
+            },
+            dataPermissions: {
+              allowNewsSearch: true,
+              allowMarketData: true,
+              allowOnchainData: false,
+            },
+            marketDataConfig: {
+              symbol: 'KRW-BTC',
+              timeframes: ['15m', '1h', '4h', '1d'],
+              primaryTimeframe: '1h',
+            },
+            riskPreferences: {
+              riskLevel: 'conservative',
+              maxIdeaExposureFraction: 0.3,
+              positionSizeFraction: 0.1,
+              allowLeverage: false,
+            },
+            humanReview: {
+              requiredBeforeLiveTrading: true,
+              requiredWhenConfidenceBelow: 0.7,
+            },
           },
           updatedAt: '2026-06-02T01:10:00.000Z',
         },
@@ -249,6 +285,43 @@ export function ApiUpdateStrategyStatus() {
     ApiBadRequestResponse({
       description:
         '요청 상태가 유효하지 않거나, 현재 상태에서 변경할 수 없습니다. 구조화되지 않은 전략은 active로 변경할 수 없고, 활성화된 전략은 일시정지 후 보관해야 합니다.',
+    }),
+    ApiUnauthorizedResponse({
+      description: 'access_token 쿠키가 없거나 유효하지 않습니다.',
+    }),
+    ApiNotFoundResponse({
+      description: '전략이 존재하지 않거나 현재 사용자의 전략이 아닙니다.',
+    }),
+  );
+}
+
+export function ApiParseStrategy() {
+  return applyDecorators(
+    ApiCookieAuth('access_token'),
+    ApiOperation({
+      summary: '전략 구조화',
+      description:
+        '사용자의 자연어 전략을 AI 실행 지침 JSON으로 구조화하여 structuredStrategy에 저장합니다.',
+    }),
+    ApiParam({
+      name: 'id',
+      example: 1,
+      description: '구조화할 전략 ID입니다.',
+    }),
+    ApiOkResponse({
+      description: '전략 구조화 성공',
+      schema: {
+        example: {
+          ...strategyExample,
+          structuredStrategy: {
+            version: 1,
+            kind: 'ai_execution_plan',
+          },
+        },
+      },
+    }),
+    ApiBadRequestResponse({
+      description: '보관되었거나 활성화된 전략은 구조화할 수 없습니다.',
     }),
     ApiUnauthorizedResponse({
       description: 'access_token 쿠키가 없거나 유효하지 않습니다.',

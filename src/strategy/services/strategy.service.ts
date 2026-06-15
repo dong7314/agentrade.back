@@ -124,6 +124,18 @@ export class StrategyService {
       ? new Date(input.scheduleAnchorAt)
       : strategy.scheduleAnchorAt;
 
+    const shouldInvalidateParsedStrategy =
+      input.name !== undefined ||
+      input.market !== undefined ||
+      input.prompt !== undefined ||
+      input.intervalMinutes !== undefined ||
+      input.scheduleAnchorAt !== undefined;
+
+    if (shouldInvalidateParsedStrategy) {
+      strategy.structuredStrategy = null;
+      strategy.nextRunAt = null;
+    }
+
     return this.strategyRepository.save(strategy);
   }
 
@@ -161,6 +173,28 @@ export class StrategyService {
           '전략은 draft 상태로 되돌릴 수 없습니다.',
         );
     }
+
+    return this.strategyRepository.save(strategy);
+  }
+
+  // parse 저장 로직
+  async parse(input: {
+    userId: number;
+    strategyId: number;
+  }): Promise<StrategyEntity> {
+    const strategy = await this.findOneByUser(input.strategyId, input.userId);
+
+    if (strategy.strategyStatus === StrategyStatus.ARCHIVED) {
+      throw new BadRequestException('보관된 전략은 구조화할 수 없습니다.');
+    }
+
+    if (strategy.enabled || strategy.strategyStatus === StrategyStatus.ACTIVE) {
+      throw new BadRequestException(
+        '활성화된 전략은 일시정지 후 구조화할 수 있습니다.',
+      );
+    }
+
+    strategy.structuredStrategy = this.createMockStructuredStrategy(strategy);
 
     return this.strategyRepository.save(strategy);
   }
@@ -223,5 +257,48 @@ export class StrategyService {
     strategy.strategyStatus = StrategyStatus.ARCHIVED;
     strategy.enabled = false;
     strategy.nextRunAt = null;
+  }
+
+  private createMockStructuredStrategy(
+    strategy: StrategyEntity,
+  ): Record<string, unknown> {
+    return {
+      version: 1,
+      kind: 'ai_execution_plan',
+      source: {
+        prompt: strategy.prompt,
+        market: strategy.market,
+      },
+      aiInstructions: {
+        summary: '사용자의 자연어 전략을 기반으로 안전한 투자 판단을 수행한다.',
+        decisionProcess: [
+          '시장 뉴스와 거시 이벤트를 확인한다.',
+          '지지/저항 구간과 주요 가격 흐름을 확인한다.',
+          '근거가 부족하면 매매하지 않는다.',
+          '과도한 레버리지와 올인을 피한다.',
+          '수익 구간에서는 분할 익절을 고려한다.',
+        ],
+      },
+      dataPermissions: {
+        allowNewsSearch: true,
+        allowMarketData: true,
+        allowOnchainData: false,
+      },
+      marketDataConfig: {
+        symbol: strategy.market,
+        timeframes: ['15m', '1h', '4h', '1d'],
+        primaryTimeframe: '1h',
+      },
+      riskPreferences: {
+        riskLevel: 'conservative',
+        maxIdeaExposureFraction: 0.3,
+        positionSizeFraction: 0.1,
+        allowLeverage: false,
+      },
+      humanReview: {
+        requiredBeforeLiveTrading: true,
+        requiredWhenConfidenceBelow: 0.7,
+      },
+    };
   }
 }
