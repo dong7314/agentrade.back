@@ -36,7 +36,7 @@ import { FindStrategiesQueryDto } from '../dto/find-strategy.query.dto';
 import { UpdateStrategyStatusDto } from '../dto/update-strategy-status.dto';
 import type { AuthenticatedUser } from '@/auth/types/authenticated-user.type';
 
-@ApiTags('strategies')
+@ApiTags('Strategies')
 @Controller('strategies')
 export class StrategyController {
   constructor(private readonly strategyService: StrategyService) {}

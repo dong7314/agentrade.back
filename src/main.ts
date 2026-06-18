@@ -33,7 +33,6 @@ async function bootstrap() {
     .setTitle('Agentrade API')
     .setDescription('AI strategy simulation backend API')
     .setVersion('0.1.0')
-    .addTag('health')
     .addCookieAuth('access_token', { type: 'apiKey' }, 'access_token')
     .addCookieAuth('refresh_token', { type: 'apiKey' }, 'refresh_token')
     .build();
