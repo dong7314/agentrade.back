@@ -7,6 +7,9 @@ import {
 } from '@nestjs/common';
 
 import { UserService } from '@/user/services/user.service';
+import { StrategyParseService } from './strategy-parse.service';
+
+import { isStructuredStrategy } from '../validators/structured-strategy.validator';
 
 import { StrategyStatus } from '../enums/strategy-status.enum';
 import { StrategyEntity } from '../entities/strategy.entity';
@@ -20,6 +23,7 @@ export class StrategyService {
     @InjectRepository(StrategyEntity)
     private readonly strategyRepository: Repository<StrategyEntity>,
     private readonly userService: UserService,
+    private readonly strategyParseService: StrategyParseService,
   ) {}
 
   // 사용자의 전략을 전부 찾는 메서드
@@ -194,7 +198,8 @@ export class StrategyService {
       );
     }
 
-    strategy.structuredStrategy = this.createMockStructuredStrategy(strategy);
+    strategy.structuredStrategy =
+      await this.strategyParseService.parseStrategy(strategy);
 
     return this.strategyRepository.save(strategy);
   }
@@ -221,7 +226,7 @@ export class StrategyService {
 
   // active 상태로 전략 상태 변경
   private activateStrategy(strategy: StrategyEntity): void {
-    if (!strategy.structuredStrategy) {
+    if (!isStructuredStrategy(strategy.structuredStrategy)) {
       throw new BadRequestException(
         '구조화되지 않은 전략은 활성화할 수 없습니다.',
       );
@@ -257,48 +262,5 @@ export class StrategyService {
     strategy.strategyStatus = StrategyStatus.ARCHIVED;
     strategy.enabled = false;
     strategy.nextRunAt = null;
-  }
-
-  private createMockStructuredStrategy(
-    strategy: StrategyEntity,
-  ): Record<string, unknown> {
-    return {
-      version: 1,
-      kind: 'ai_execution_plan',
-      source: {
-        prompt: strategy.prompt,
-        market: strategy.market,
-      },
-      aiInstructions: {
-        summary: '사용자의 자연어 전략을 기반으로 안전한 투자 판단을 수행한다.',
-        decisionProcess: [
-          '시장 뉴스와 거시 이벤트를 확인한다.',
-          '지지/저항 구간과 주요 가격 흐름을 확인한다.',
-          '근거가 부족하면 매매하지 않는다.',
-          '과도한 레버리지와 올인을 피한다.',
-          '수익 구간에서는 분할 익절을 고려한다.',
-        ],
-      },
-      dataPermissions: {
-        allowNewsSearch: true,
-        allowMarketData: true,
-        allowOnchainData: false,
-      },
-      marketDataConfig: {
-        symbol: strategy.market,
-        timeframes: ['15m', '1h', '4h', '1d'],
-        primaryTimeframe: '1h',
-      },
-      riskPreferences: {
-        riskLevel: 'conservative',
-        maxIdeaExposureFraction: 0.3,
-        positionSizeFraction: 0.1,
-        allowLeverage: false,
-      },
-      humanReview: {
-        requiredBeforeLiveTrading: true,
-        requiredWhenConfidenceBelow: 0.7,
-      },
-    };
   }
 }
