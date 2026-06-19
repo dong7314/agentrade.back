@@ -26,6 +26,18 @@ function parseBoolean(value: string | undefined, fallback: boolean): boolean {
   return value === 'true';
 }
 
+function parseNumber(value: string | undefined, fallback: number): number {
+  if (!value) return fallback;
+
+  const parsed = Number(value);
+
+  if (!Number.isFinite(parsed)) {
+    throw new Error(`Invalid number env value: ${value}`);
+  }
+
+  return parsed;
+}
+
 export function validateEnv(config: RawEnv): ValidatedEnv {
   return {
     ...config,
@@ -46,6 +58,13 @@ export function validateEnv(config: RawEnv): ValidatedEnv {
     KAKAO_REST_API_KEY: config.KAKAO_REST_API_KEY,
     KAKAO_CLIENT_SECRET: config.KAKAO_CLIENT_SECRET,
     KAKAO_CALLBACK_URL: config.KAKAO_CALLBACK_URL,
+    LLM_PROVIDER: config.LLM_PROVIDER ?? 'llama_cpp',
+    LLM_BASE_URL: config.LLM_BASE_URL ?? 'http://127.0.0.1:8080/v1',
+    LLM_API_KEY: config.LLM_API_KEY ?? '',
+    LLM_MODEL: config.LLM_MODEL ?? 'agentrade-local',
+    LLM_TIMEOUT_MS: parsePositiveInteger(config.LLM_TIMEOUT_MS, 120000),
+    LLM_MAX_TOKENS: parsePositiveInteger(config.LLM_MAX_TOKENS, 1200),
+    LLM_TEMPERATURE: parseNumber(config.LLM_TEMPERATURE, 0.1),
     JWT_ACCESS_SECRET: config.JWT_ACCESS_SECRET ?? 'test_jwt_access_secret',
     JWT_REFRESH_SECRET: config.JWT_REFRESH_SECRET ?? 'test_jwt_refresh_secret',
     JWT_ACCESS_TTL_SECONDS: parsePositiveInteger(

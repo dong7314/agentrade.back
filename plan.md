@@ -1,36 +1,43 @@
 # Agentrade Backend Plan
 
-최종 업데이트: 2026-06-18
+최종 업데이트: 2026-06-19
 
 이 문서는 `backend` 폴더에서 현재까지 어디까지 개발했는지, 이번 세션에서 어떤 방식으로 학습/개발을 진행했는지, 다른 컴퓨터에서 이어서 작업할 때 무엇부터 확인하면 되는지 정리한 인수인계 문서입니다.
 
 현재 백엔드는 NestJS + TypeORM + PostgreSQL + Scalar 기반으로 로컬 회원가입/로그인, 쿠키 기반 access/refresh token, DB 세션, Naver/Kakao OAuth 로그인, 전략 생성/목록/상세/수정/상태 변경/구조화 흐름까지 1차 구현된 상태입니다.
 
-2026-06-18 현재 중요한 진행 상태:
+2026-06-19 현재 중요한 진행 상태:
 
-- `POST /strategies/:id/parse`는 아직 실제 LLM 호출 없이 mock 구조화 결과를 저장합니다.
+- `POST /strategies/:id/parse`는 이제 mock 생성이 아니라 `StrategyParseService`에서 `LlmService`를 통해 로컬 llama.cpp/OpenAI-compatible API를 호출하는 구조로 변경했습니다.
 - parse 결과 구조를 `src/strategy/types/structured-strategy.type.ts`의 `StructuredStrategy` 타입으로 고정했습니다.
 - `StructuredStrategy`는 `version=1`, `kind=ai_execution_plan`, `source`, `aiInstructions`, `dataPermissions`, `marketDataConfig`, `riskPreferences`, `humanReview`를 포함합니다.
-- mock parse 생성 책임을 `StrategyService`에서 분리하여 `src/strategy/services/strategy-parse.service.ts`의 `StrategyParseService`로 옮겼습니다.
-- `StrategyParseService.parseStrategy()`는 현재 mock 결과를 반환하지만, 다음 단계에서 llama.cpp/OpenAI-compatible API 호출로 교체할 수 있도록 `Promise<StructuredStrategy>`를 반환합니다.
+- `src/llm/llm.module.ts`, `src/llm/services/llm.service.ts`, `src/llm/dto/llm-chat-completion.response.dto.ts`를 추가했습니다.
+- `LlmService.createChatCompletionContent()`는 `LLM_BASE_URL`, `LLM_API_KEY`, `LLM_MODEL`, `LLM_TIMEOUT_MS`, `LLM_MAX_TOKENS`, `LLM_TEMPERATURE`를 읽어 `/v1/chat/completions`를 호출하고 `choices[0].message.content` 문자열만 반환합니다.
+- JSON parse와 schema 검증 책임은 `StrategyParseService`가 갖습니다.
+- `StrategyParseService.parseStrategy()`는 최대 3회 retry합니다.
+- LLM 응답이 깨진 JSON이면 exception으로 즉시 중단하지 않고 `previousInvalidResult`에 `rawContent`와 실패 이유를 담아 다음 retry prompt에 전달합니다.
+- LLM 응답이 JSON이지만 `StructuredStrategy` schema를 통과하지 못해도 다음 retry prompt에 이전 실패 결과를 전달합니다.
+- 유효한 `StructuredStrategy`를 얻으면 저장 전에 `source.prompt`, `source.market`, `marketDataConfig.symbol`을 DB의 `StrategyEntity` 값으로 보정합니다.
 - `src/strategy/validators/structured-strategy.validator.ts`에 `isStructuredStrategy()` 런타임 validator를 추가했습니다.
 - `PATCH /strategies/:id/status`에서 active 전환 시 단순히 `structuredStrategy` 존재 여부만 보지 않고, `isStructuredStrategy()`를 통과해야 활성화되도록 보강했습니다.
+- 실제 LLM instruction은 `src/strategy/data/system.prompt.ts`의 `SystemPrompt`로 분리했습니다.
 - `StrategyModule` providers에 `StrategyParseService`를 등록했습니다.
-- 2026-06-18 기준 아래 검증은 통과했습니다.
+- `StrategyModule` imports에 `LlmModule`을 등록했습니다.
+- `src/config/env.validation.ts`에 `LLM_*` 환경 변수를 추가했고, `LLM_TEMPERATURE`를 위해 `parseNumber()` helper를 추가했습니다.
+- 2026-06-19 기준 아래 검증은 통과했습니다.
 
 ```bash
-pnpm exec eslint "src/strategy/**/*.ts" --fix
 pnpm exec tsc --noEmit
-pnpm exec eslint "src/strategy/**/*.ts"
+pnpm exec eslint "src/**/*.ts"
 ```
 
 다음 작업 방향:
 
-- 사용자는 실제 LLM 연동을 OpenAI API가 아니라 로컬 PC의 `llama.cpp` / `llama-server`로 진행할 계획입니다.
-- 따라서 다음 구현은 `OPENAI_API_KEY` 중심이 아니라 `LLM_PROVIDER`, `LLM_BASE_URL`, `LLM_API_KEY`, `LLM_MODEL` 같은 로컬 OpenAI-compatible 서버 설정 중심으로 잡습니다.
-- 바로 API 호출을 붙이기 전에 `env.validation.ts`에 LLM 환경 변수를 추가하고, `src/llm` 모듈과 `LlmService` 경계를 먼저 만드는 것이 좋습니다.
+- 집에서 로컬 `llama.cpp` / `llama-server`를 띄운 뒤 Scalar에서 `POST /strategies/:id/parse`를 실제 호출해 봅니다.
+- parse가 성공하면 `structuredStrategy.kind=ai_execution_plan`, `source`, `marketDataConfig.symbol`, active 전환 성공 여부를 확인합니다.
+- parse가 실패하면 llama.cpp 응답 형식, `SystemPrompt`, `LLM_MAX_TOKENS`, `LLM_TEMPERATURE`, retry prompt를 조정합니다.
 
-2026-06-16 이전 중요한 진행 상태:
+2026-06-18 이전 중요한 진행 상태:
 
 - `PATCH /strategies/:id` 전략 수정 API까지 구현했습니다.
 - 전략 수정은 `enabled=true`이거나 `strategyStatus=active`인 경우 막도록 1차 정책을 넣었습니다.
@@ -154,7 +161,7 @@ KAKAO_CALLBACK_URL=http://localhost:4000/auth/kakao/callback
 FRONTEND_AUTH_REDIRECT_URL=http://localhost:3000
 ```
 
-다음 단계에서 로컬 `llama.cpp` 연동을 위해 추가할 예정인 LLM 환경 변수:
+로컬 `llama.cpp` 연동을 위해 추가한 LLM 환경 변수:
 
 ```env
 LLM_PROVIDER=llama_cpp
@@ -192,7 +199,7 @@ LLM 변수 의미:
 - 실제 secret 값은 문서에 남기지 않습니다.
 - `.env`는 커밋하지 않습니다.
 - `JWT_ACCESS_TTL_SECONDS`, `JWT_REFRESH_TTL_SECONDS`는 `env.validation.ts`에서 number로 파싱하므로 서비스에서는 `ConfigService.getOrThrow<number>()`로 가져옵니다.
-- `LLM_TEMPERATURE`는 소수 값이므로 현재 `parsePositiveInteger()`로 파싱할 수 없습니다. 다음 작업에서 `parseNumber()` 또는 `parseNonNegativeNumber()` helper를 추가해야 합니다.
+- `LLM_TEMPERATURE`는 소수 값이므로 `parsePositiveInteger()`가 아니라 `parseNumber()` helper로 파싱합니다.
 - 운영 환경에서는 프론트 `https://agentrade.ldy-studio.com`, 백엔드 `https://api-agentrade.ldy-studio.com`처럼 서브도메인을 분리할 계획입니다.
 
 ### 3.4 TypeORM + PostgreSQL
@@ -689,7 +696,7 @@ GET /auth/kakao/callback
 
 ## 12. Strategy 도메인
 
-2026-06-18 기준 전략 도메인은 생성/목록/상세/수정/상태 변경/구조화까지 구현했습니다. 구조화 결과는 아직 mock이지만, 실제 LLM 연동을 위해 타입, parse service, 런타임 validator까지 분리해둔 상태입니다.
+2026-06-19 기준 전략 도메인은 생성/목록/상세/수정/상태 변경/구조화까지 구현했습니다. 구조화 흐름은 `StrategyParseService`에서 `LlmService`를 통해 로컬 llama.cpp/OpenAI-compatible API를 호출하는 구조로 바뀌었습니다. 아직 실제 Scalar 수동 테스트는 집에서 llama.cpp를 띄운 뒤 진행할 예정입니다.
 
 현재 구현된 API:
 
@@ -743,8 +750,10 @@ GET /auth/kakao/callback
 - 별도 body는 받지 않습니다.
 - `strategyId`는 path param으로 받고, 로그인 사용자의 `userId`와 함께 조회합니다.
 - `StrategyService.parse()`가 전략 조회와 상태 정책 검사를 담당합니다.
-- `StrategyParseService.parseStrategy()`가 기존 `prompt`, `market`, 실행 옵션을 읽어 `StructuredStrategy` 형태의 구조화 결과를 생성합니다.
-- 현재 `StrategyParseService` 내부는 mock 결과를 반환하지만, 메서드 반환 타입은 이후 llama.cpp 호출로 교체하기 쉽도록 `Promise<StructuredStrategy>`입니다.
+- `StrategyParseService.parseStrategy()`가 기존 `prompt`, `market`, 실행 옵션을 LLM prompt로 만들고 `LlmService`를 호출합니다.
+- `LlmService`는 llama.cpp의 OpenAI-compatible `/v1/chat/completions`를 호출하고 raw content 문자열을 반환합니다.
+- `StrategyParseService`는 raw content를 JSON parse하고 `isStructuredStrategy()`로 검증합니다.
+- parse 실패 시 최대 3회까지 재시도하며, 이전 실패 결과를 다음 prompt에 포함합니다.
 
 현재 전략 상태 변경 DTO:
 
@@ -794,10 +803,11 @@ GET /auth/kakao/callback
 - 다른 사용자의 전략은 구조화할 수 없습니다.
 - `strategyStatus=archived`인 전략은 구조화할 수 없습니다.
 - `enabled=true`이거나 `strategyStatus=active`인 전략은 구조화할 수 없습니다.
-- 현재 구현은 실제 LLM 호출 없이 mock `structuredStrategy`를 생성합니다.
+- 현재 구현은 `LlmService`를 통해 로컬 llama.cpp 서버에 구조화 요청을 보냅니다.
 - `structuredStrategy`는 세부 매수/매도 룰 목록이 아니라 AI 실행 에이전트에게 전달할 실행 지침과 데이터 접근 옵션을 담습니다.
 - parse 성공 여부는 별도 `parseStatus`를 두지 않고 `structuredStrategy !== null` 여부로 판단합니다.
 - active 전환은 이제 단순 존재 여부가 아니라 `isStructuredStrategy()` 런타임 검증까지 통과해야 가능합니다.
+- LLM이 `source.prompt`, `source.market`, `marketDataConfig.symbol`을 잘못 반환해도 저장 전 서버의 전략 값으로 보정합니다.
 
 구조화 관련 파일:
 
@@ -806,13 +816,19 @@ GET /auth/kakao/callback
   - 현재 버전은 `version=1`, `kind=ai_execution_plan`으로 고정합니다.
 - `src/strategy/services/strategy-parse.service.ts`
   - 전략 prompt를 구조화 결과로 변환하는 책임을 담당합니다.
-  - 현재는 private `createMockStructuredStrategy()`로 mock 데이터를 만듭니다.
-  - public `parseStrategy()`는 다음 단계에서 llama.cpp 호출로 교체할 진입점입니다.
+  - `LlmService.createChatCompletionContent()`로 llama.cpp 응답 content를 가져옵니다.
+  - JSON parse 실패나 schema 검증 실패 시 최대 3회 재시도합니다.
+  - 유효한 결과를 얻으면 DB 기준 strategy 값으로 source/market symbol을 보정한 뒤 반환합니다.
 - `src/strategy/validators/structured-strategy.validator.ts`
   - DB에서 꺼낸 `jsonb` 값이 실제 `StructuredStrategy` 형태인지 런타임에서 검사합니다.
   - `StrategyService.activateStrategy()`에서 active 전환 전에 사용합니다.
+- `src/strategy/data/system.prompt.ts`
+  - LLM에게 반환해야 하는 `StructuredStrategy` JSON 구조와 안전 정책을 알려주는 system prompt입니다.
+- `src/llm/services/llm.service.ts`
+  - llama.cpp OpenAI-compatible API 호출을 담당합니다.
+  - JSON parse는 하지 않고 content string만 반환합니다.
 
-현재 mock `structuredStrategy` 형태:
+현재 LLM이 반환해야 하는 `structuredStrategy` 목표 형태:
 
 ```json
 {
@@ -927,11 +943,12 @@ GET /strategies?page=1&limit=15&market=KRW-BTC&strategyStatus=draft&strategyMode
 
 현재 남은 정리 포인트:
 
-- 실제 Scalar에서 전략 생성/목록/상세/수정/구조화/상태 변경을 한 번 더 수동 확인하면 좋습니다.
-- `POST /strategies/:id/parse` 이후 `structuredStrategy`가 저장되는지 확인해야 합니다.
+- 집에서 로컬 llama.cpp 서버를 띄운 뒤 Scalar에서 전략 생성/목록/상세/수정/구조화/상태 변경을 한 번 더 수동 확인하면 좋습니다.
+- `POST /strategies/:id/parse`가 실제 llama.cpp 호출로 `structuredStrategy`를 저장하는지 확인해야 합니다.
 - parse 전에는 `strategyStatus=active` 변경 요청이 400을 반환하고, parse 후에는 `isStructuredStrategy()` 검증을 통과하여 active 전환이 성공해야 합니다.
 - 전략 수정 후 `structuredStrategy=null`, `nextRunAt=null`로 초기화되는지 확인해야 합니다.
-- 현재 parse는 mock이므로, 다음 단계에서 로컬 `llama.cpp` 서버를 호출하는 `LlmService`를 붙여야 합니다.
+- llama.cpp가 JSON을 안정적으로 반환하지 않으면 `SystemPrompt`, retry prompt, `LLM_MAX_TOKENS`, `LLM_TEMPERATURE`를 조정해야 합니다.
+- `LlmService`에서 non-2xx 응답 시 response body를 포함하도록 개선하면 디버깅이 더 쉬워집니다.
 - `isStructuredStrategy()` validator는 추가됐지만 별도 단위 테스트는 아직 작성하지 않았습니다.
 - scheduler/run 테이블이 생기면 실제 실행 중인 전략 수정 차단을 `run_status` 기준으로 보강해야 합니다.
 
@@ -951,14 +968,16 @@ pnpm exec jest --runInBand
 
 2026-06-18 기준 구조화 결과 타입, parse service 분리, 런타임 validator 추가 작업 후 아래 명령은 Codex가 직접 실행했고 통과했습니다.
 
+2026-06-19 기준 `LlmModule`, `LlmService`, llama.cpp 호출 흐름, retry 기반 `StrategyParseService` 수정 후 아래 명령은 Codex가 직접 실행했고 통과했습니다.
+
 ```bash
 pnpm exec tsc --noEmit
-pnpm exec eslint "src/strategy/**/*.ts"
+pnpm exec eslint "src/**/*.ts"
 ```
 
 참고:
 
-- 이번 2026-06-18 작업에서는 `pnpm exec jest --runInBand`는 다시 실행하지 않았습니다.
+- 이번 2026-06-19 작업에서는 `pnpm exec jest --runInBand`는 다시 실행하지 않았습니다.
 - 사용자는 앞 단계에서 테스트 작업을 완료했다고 보고했습니다.
 - 다음 컴퓨터에서 이어갈 때는 전체 안정성 확인을 위해 `pnpm exec jest --runInBand`를 한 번 더 실행하면 좋습니다.
 
@@ -1169,7 +1188,7 @@ psql -d agentrade -c "select id, user_id, name, market, strategy_mode, strategy_
 
 ## 16. 바로 다음 작업 추천
 
-현재 코드 기준으로 다음 작업은 "로컬 llama.cpp 연동 준비"입니다. 이미 `StructuredStrategy` 타입, `StrategyParseService`, `isStructuredStrategy()` validator는 만들어졌으므로, 다음에는 실제 LLM 호출을 붙일 수 있는 설정과 서비스 경계를 잡으면 됩니다.
+현재 코드 기준으로 다음 작업은 "집에서 로컬 llama.cpp를 띄우고 Scalar에서 실제 parse 흐름을 수동 검증"하는 것입니다. `LLM_*` 환경 변수, `LlmModule`, `LlmService`, `StrategyParseService`의 retry/validator 흐름은 구현되어 있습니다.
 
 ### 16.1 다른 컴퓨터에서 시작 직후 확인
 
@@ -1178,7 +1197,7 @@ psql -d agentrade -c "select id, user_id, name, market, strategy_mode, strategy_
 ```bash
 pnpm install
 pnpm exec tsc --noEmit
-pnpm exec eslint "src/strategy/**/*.ts"
+pnpm exec eslint "src/**/*.ts"
 pnpm exec jest --runInBand
 ```
 
@@ -1189,9 +1208,9 @@ pnpm migration:run
 pnpm typeorm migration:show
 ```
 
-### 16.2 로컬 llama.cpp 서버 준비
+### 16.2 로컬 llama.cpp 서버 확인
 
-다음 작업은 백엔드 코드보다 먼저 로컬 LLM 서버가 정상 응답하는지 확인하는 것입니다.
+집에서 백엔드 테스트 전에 로컬 LLM 서버가 정상 응답하는지 확인합니다.
 
 예상 실행:
 
@@ -1219,7 +1238,7 @@ curl http://127.0.0.1:8080/v1/models \
 
 ### 16.3 LLM 환경 변수 추가
 
-`src/config/env.validation.ts`에 아래 변수를 추가합니다.
+`.env`에 아래 값이 들어가 있어야 합니다. `src/config/env.validation.ts`에는 이미 파싱 로직이 추가되어 있습니다.
 
 ```env
 LLM_PROVIDER=llama_cpp
@@ -1231,81 +1250,50 @@ LLM_MAX_TOKENS=1200
 LLM_TEMPERATURE=0.1
 ```
 
-구현 포인트:
-
-- `LLM_TIMEOUT_MS`, `LLM_MAX_TOKENS`는 기존 `parsePositiveInteger()`로 파싱할 수 있습니다.
-- `LLM_TEMPERATURE`는 소수라서 새 helper가 필요합니다.
-- helper 이름은 `parseNumber()` 또는 `parseNonNegativeNumber()` 정도면 충분합니다.
-
-추천 기본값:
-
-```ts
-LLM_PROVIDER: config.LLM_PROVIDER ?? 'llama_cpp',
-LLM_BASE_URL: config.LLM_BASE_URL ?? 'http://127.0.0.1:8080/v1',
-LLM_API_KEY: config.LLM_API_KEY ?? 'local-dev-key',
-LLM_MODEL: config.LLM_MODEL ?? 'agentrade-local',
-LLM_TIMEOUT_MS: parsePositiveInteger(config.LLM_TIMEOUT_MS, 120000),
-LLM_MAX_TOKENS: parsePositiveInteger(config.LLM_MAX_TOKENS, 1200),
-LLM_TEMPERATURE: parseNumber(config.LLM_TEMPERATURE, 0.1),
-```
-
-### 16.4 LlmModule / LlmService 추가
-
-다음으로 LLM 호출 전용 모듈을 만듭니다.
-
-추천 파일:
-
-```text
-src/llm/llm.module.ts
-src/llm/services/llm.service.ts
-```
-
-책임 분리:
+현재 책임 분리:
 
 - `StrategyService`
   - 전략 조회, 소유자 검증, 상태 정책, DB 저장
 - `StrategyParseService`
   - 전략 prompt를 structured strategy로 바꾸는 도메인 흐름
-  - LLM 응답을 `isStructuredStrategy()`로 검증
+  - `LlmService` 응답 content를 JSON parse
+  - JSON parse 실패 또는 schema 검증 실패 시 최대 3회 retry
+  - 유효한 LLM 응답을 `isStructuredStrategy()`로 검증
+  - 저장 전 `source.prompt`, `source.market`, `marketDataConfig.symbol`을 DB 기준 값으로 보정
 - `LlmService`
   - `LLM_BASE_URL`, `LLM_API_KEY`, `LLM_MODEL`을 읽어 HTTP 호출
   - `/v1/chat/completions` 요청
-  - 응답 content를 JSON으로 파싱
+  - 응답 content string만 반환
 
-초기 `LlmService` 메서드 예:
+### 16.4 집에서 parse 수동 테스트
 
-```ts
-async createJsonChatCompletion(input: {
-  systemPrompt: string;
-  userPrompt: string;
-}): Promise<unknown> {
-  // fetch(`${baseUrl}/chat/completions`) 호출
-  // choices[0].message.content를 JSON.parse
-}
+로컬 llama.cpp 서버와 백엔드를 모두 띄운 뒤 Scalar에서 아래 흐름을 확인합니다.
+
+```bash
+pnpm start:dev
 ```
 
-처음부터 완벽한 추상화를 만들 필요는 없습니다. 우선 `StrategyParseService`가 필요한 JSON 응답을 받을 수 있을 정도로 작게 시작하면 됩니다.
-
-### 16.5 StrategyParseService에서 LlmService 사용
-
-`StrategyParseService.parseStrategy()`는 현재 mock을 반환합니다.
-
-현재 방향:
-
-```ts
-parseStrategy(strategy: StrategyEntity): Promise<StructuredStrategy> {
-  return Promise.resolve(this.createMockStructuredStrategy(strategy));
-}
-```
-
-다음 방향:
+Scalar:
 
 ```text
-1. strategy prompt와 market을 기반으로 system/user prompt 구성
-2. LlmService 호출
-3. 응답 JSON을 isStructuredStrategy()로 검증
-4. 검증 실패 시 BadRequestException 또는 InternalServerErrorException 처리
-5. 검증 성공 시 StructuredStrategy 반환
+http://localhost:4000/docs
+```
+
+확인 순서:
+
+1. `POST /auth/login`으로 로그인하고 cookie 발급 확인
+2. `POST /strategies`로 초안 전략 생성
+3. 생성된 전략 id로 `POST /strategies/:id/parse` 호출
+4. 응답의 `structuredStrategy.kind`가 `ai_execution_plan`인지 확인
+5. `structuredStrategy.source.prompt`가 DB 전략 prompt와 같은지 확인
+6. `structuredStrategy.source.market`이 DB 전략 market과 같은지 확인
+7. `structuredStrategy.marketDataConfig.symbol`이 DB 전략 market과 같은지 확인
+8. `PATCH /strategies/:id/status` body `{ "strategyStatus": "active" }`로 active 전환 확인
+
+DB 확인:
+
+```bash
+psql -d agentrade -c "select id, name, market, strategy_status, enabled, next_run_at, structured_strategy from strategies order by created_at desc limit 3;"
 ```
 
 주의:
@@ -1313,8 +1301,10 @@ parseStrategy(strategy: StrategyEntity): Promise<StructuredStrategy> {
 - 실제 LLM 응답은 TypeScript 타입을 믿으면 안 됩니다.
 - DB에 저장하기 전 반드시 `isStructuredStrategy()`로 검사합니다.
 - active 전환 시에도 다시 `isStructuredStrategy()`로 검사하므로 2중 방어가 됩니다.
+- `LlmService`는 content string만 반환하고 JSON parse는 `StrategyParseService`에서 합니다.
+- 깨진 JSON이나 schema mismatch는 retry prompt로 보정합니다.
 
-### 16.6 llama.cpp JSON 응답 방식
+### 16.5 llama.cpp JSON 응답 방식
 
 `llama.cpp`의 OpenAI-compatible `/v1/chat/completions`는 `response_format`을 지원합니다. 우선은 단순하게 `json_object`로 시작하고, 안정화되면 `json_schema`로 강화하는 흐름이 좋습니다.
 
@@ -1344,11 +1334,12 @@ parseStrategy(strategy: StrategyEntity): Promise<StructuredStrategy> {
 나중에 강화할 부분:
 
 - `response_format.type=json_schema`로 `StructuredStrategy` schema 강제
-- LLM이 JSON 외 텍스트를 섞어 반환할 때의 복구/실패 정책
-- timeout, 네트워크 실패, llama-server 미실행 상태의 에러 메시지
+- LLM이 JSON 외 텍스트를 섞어 반환할 때의 복구 정책 고도화
+- timeout, 네트워크 실패, llama-server 미실행 상태의 에러 메시지 개선
+- `LlmService`에서 non-2xx response body를 포함해 디버깅하기 쉽게 만들기
 - 모델별 prompt template 차이
 
-### 16.7 전략 API 수동 검증 유지
+### 16.6 전략 API 수동 검증 유지
 
 LLM 연동 전후로 아래 흐름은 계속 확인합니다.
 
@@ -1363,7 +1354,7 @@ LLM 연동 전후로 아래 흐름은 계속 확인합니다.
 9. prompt 또는 market 수정
 10. `structuredStrategy=null`, `nextRunAt=null` 초기화 확인
 
-### 16.8 전략 활성화 흐름 정책 유지
+### 16.7 전략 활성화 흐름 정책 유지
 
 AI 구조화 결과가 저장된 뒤 자동 실행을 켤 수 있게 합니다. 별도 `enable/disable` API를 만들기보다는 우선 `PATCH /strategies/:id/status`에서 상태별로 처리하는 방향을 유지합니다.
 
@@ -1399,7 +1390,7 @@ strategyStatus=archived
 
 정확한 시간 계산은 scheduler worker를 붙일 때 다시 다듬습니다.
 
-### 16.9 작은 리팩토링
+### 16.8 작은 리팩토링
 
 우선순위가 높지는 않지만 다음 정리는 해두면 좋습니다.
 
@@ -1411,7 +1402,7 @@ strategyStatus=archived
 - social login 공통 흐름이 더 커지면 `SocialLoginService` 분리 검토
 - `users.provider`, `users.provider_id`를 계속 유지할지 제거할지 결정
 
-### 16.10 추가 테스트 보강
+### 16.9 추가 테스트 보강
 
 현재 테스트는 매우 얇습니다. 다만 프론트/백엔드를 모두 해야 하므로 모든 테스트를 한 번에 작성할 필요는 없습니다.
 
@@ -1451,7 +1442,7 @@ strategyStatus=archived
   - `decisionProcess`가 `string[]`이 아니면 false
   - `riskLevel`이 허용값이 아니면 false
 
-### 16.11 Role Guard와 관리자 권한 API
+### 16.10 Role Guard와 관리자 권한 API
 
 인증 기반 다음 단계로는 관리자 권한 기반을 만드는 것이 좋습니다.
 
@@ -1615,6 +1606,12 @@ audit_logs
 - `LLM_BASE_URL`, `LLM_MODEL`, `LLM_API_KEY` 같은 provider 중립적인 환경 변수 설계 방향
 - `llama-server --alias` 값과 백엔드 `LLM_MODEL` 값을 맞추는 이유
 - `llama-server --host 127.0.0.1`로 로컬 개발 서버를 외부 네트워크에 열지 않는 이유
+- `LlmService`는 HTTP 호출과 content 추출만 담당하고, JSON parse는 도메인 계층인 `StrategyParseService`에서 처리하는 책임 분리
+- LLM이 깨진 JSON을 반환할 수 있으므로 JSON parse 실패도 retry 대상에 넣어야 한다는 점
+- 재귀보다 명시적인 `for` loop와 `maxAttempts`로 LLM retry를 관리하는 방식
+- 실패한 LLM 응답을 `previousInvalidResult`로 다음 prompt에 전달해 자기 보정 가능성을 높이는 방식
+- LLM이 잘못된 `source.market`이나 `marketDataConfig.symbol`을 반환해도 서버 DB 값을 기준으로 normalize하는 이유
+- `response_format=json_object`로 시작하고 나중에 `json_schema`로 강화하는 단계적 접근
 
 개발 원칙:
 
