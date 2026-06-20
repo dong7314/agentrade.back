@@ -1,10 +1,40 @@
 # Agentrade Backend Plan
 
-최종 업데이트: 2026-06-19
+최종 업데이트: 2026-06-20
 
 이 문서는 `backend` 폴더에서 현재까지 어디까지 개발했는지, 이번 세션에서 어떤 방식으로 학습/개발을 진행했는지, 다른 컴퓨터에서 이어서 작업할 때 무엇부터 확인하면 되는지 정리한 인수인계 문서입니다.
 
-현재 백엔드는 NestJS + TypeORM + PostgreSQL + Scalar 기반으로 로컬 회원가입/로그인, 쿠키 기반 access/refresh token, DB 세션, Naver/Kakao OAuth 로그인, 전략 생성/목록/상세/수정/상태 변경/구조화 흐름까지 1차 구현된 상태입니다.
+현재 백엔드는 NestJS + TypeORM + PostgreSQL + Scalar 기반으로 로컬 회원가입/로그인, 쿠키 기반 access/refresh token, DB 세션, Naver/Kakao OAuth 로그인, 전략 생성/목록/상세/수정/상태 변경/LLM 구조화 흐름까지 1차 구현된 상태입니다. 또한 전략 실행 이력을 저장하기 위한 `strategy_runs` 테이블, entity, DTO, 실행 결과 타입, 런타임 validator, mock 실행 service의 초안까지 추가되어 있습니다.
+
+2026-06-20 현재 중요한 진행 상태:
+
+- `POST /strategies/:id/parse`와 로컬 llama.cpp/OpenAI-compatible LLM 연동을 수동 테스트했고, parse가 실제 LLM과 연결되어 동작하는 것까지 확인했습니다.
+- 전략 실행 이력을 저장하기 위해 `src/strategy/entities/strategy-run.entity.ts`를 추가했습니다.
+- `strategy_runs` 테이블 migration인 `1781957638841-CreateStrategyRuns.ts`를 생성했고 DB에 적용했습니다.
+- `StrategyRunStatus` enum을 추가해 실행 상태를 `running`, `succeeded`, `failed`, `cancelled`로 관리합니다.
+- `StrategyRunResult` 타입을 추가해 실행 결과를 `decision`, `reason`, `confidence`, `steps`, `strategy` 구조로 저장하도록 했습니다.
+- `isStrategyRunResult()` 런타임 validator를 추가해 workflow/AI 결과가 최소 실행 결과 계약을 만족하는지 검사합니다.
+- `StrategyRunResponseDto`를 추가해 strategy run 응답 형태를 entity와 분리했습니다.
+- `StrategyRunService.runMockByStrategy()` 초안을 추가했습니다.
+- 실행 전에는 전략 소유자, active 상태, enabled 여부, `isStructuredStrategy()` 통과 여부를 검사합니다.
+- 실행 시작 시 `strategy_runs` row를 먼저 `running` 상태로 저장하고, mock workflow가 끝나면 `succeeded` 또는 `failed`로 업데이트합니다.
+- 성공 시 `calculateNextRunAt()`을 사용해 전략의 다음 실행 시간 `nextRunAt`을 갱신합니다.
+- `StrategyModule`에 `StrategyRunEntity`와 `StrategyRunService`를 등록했습니다.
+- 2026-06-20 기준 아래 검증은 통과했습니다.
+
+```bash
+pnpm exec tsc --noEmit
+pnpm exec eslint "src/strategy/**/*.ts"
+```
+
+다음 작업 방향:
+
+- `StrategyRunController`를 추가해 수동 실행 테스트용 API를 연결합니다. 예: `POST /strategies/:id/runs/mock`
+- Swagger/Scalar 문서를 추가해 strategy run 응답 예시와 실행 조건을 확인할 수 있게 합니다.
+- 수동 API로 active 전략 실행, `running -> succeeded/failed` 저장, `nextRunAt` 갱신을 확인합니다.
+- 그다음 scheduler worker를 설계합니다. scheduler는 `enabled=true`, `strategyStatus=active`, `nextRunAt <= now`인 전략을 찾아 run을 생성하는 역할을 맡습니다.
+- scheduler 단계에서는 같은 전략이 동시에 중복 실행되지 않도록 DB lock, claim 컬럼, 또는 running run 존재 여부 검사를 추가합니다.
+- 이후 mock workflow를 실제 LangGraph/AI 실행 workflow로 교체합니다.
 
 2026-06-19 현재 중요한 진행 상태:
 
@@ -31,9 +61,9 @@ pnpm exec tsc --noEmit
 pnpm exec eslint "src/**/*.ts"
 ```
 
-다음 작업 방향:
+이 시점의 다음 작업 방향:
 
-- 집에서 로컬 `llama.cpp` / `llama-server`를 띄운 뒤 Scalar에서 `POST /strategies/:id/parse`를 실제 호출해 봅니다.
+- 집에서 로컬 `llama.cpp` / `llama-server`를 띄운 뒤 Scalar에서 `POST /strategies/:id/parse`를 실제 호출해 봅니다. 2026-06-20 기준 이 작업은 수동 테스트 완료 상태입니다.
 - parse가 성공하면 `structuredStrategy.kind=ai_execution_plan`, `source`, `marketDataConfig.symbol`, active 전환 성공 여부를 확인합니다.
 - parse가 실패하면 llama.cpp 응답 형식, `SystemPrompt`, `LLM_MAX_TOKENS`, `LLM_TEMPERATURE`, retry prompt를 조정합니다.
 
@@ -222,6 +252,7 @@ TypeORM 연결 관련 파일:
 - `1779945199913-CreateAuthSessions.ts`
 - `1780033891985-CreateSocialAccounts.ts`
 - `1780380362818-CreateStrategies.ts`
+- `1781957638841-CreateStrategyRuns.ts`
 
 현재 핵심 테이블:
 
@@ -229,6 +260,7 @@ TypeORM 연결 관련 파일:
 - `auth_sessions`
 - `social_accounts`
 - `strategies`
+- `strategy_runs`
 - `migrations`
 
 이전에 초기 실험 과정에서 생겼던 `User`, `SocialAccount` 같은 대문자 테이블은 현재 구조에서는 필요하지 않습니다. 현재 기준은 소문자 `users`, `auth_sessions`, `social_accounts`입니다.
@@ -343,21 +375,29 @@ src
     ├── dto
     │   ├── create-strategy.dto.ts
     │   ├── find-strategy.query.dto.ts
+    │   ├── strategy-run-response.dto.ts
     │   ├── strategy-response.dto.ts
     │   ├── update-strategy.dto.ts
     │   └── update-strategy-status.dto.ts
     ├── entities
+    │   ├── strategy-run.entity.ts
     │   └── strategy.entity.ts
     ├── enums
     │   ├── exchange.enum.ts
+    │   ├── strategy-run-status.enum.ts
     │   ├── strategy-mode.enum.ts
     │   └── strategy-status.enum.ts
     ├── services
     │   ├── strategy-parse.service.ts
+    │   ├── strategy-run.service.ts
     │   └── strategy.service.ts
     ├── types
+    │   ├── strategy-run-result.type.ts
     │   └── structured-strategy.type.ts
+    ├── utils
+    │   └── calculate-next-run-at.ts
     ├── validators
+    │   ├── strategy-run-result.validator.ts
     │   └── structured-strategy.validator.ts
     └── strategy.module.ts
 ```
@@ -1188,7 +1228,35 @@ psql -d agentrade -c "select id, user_id, name, market, strategy_mode, strategy_
 
 ## 16. 바로 다음 작업 추천
 
-현재 코드 기준으로 다음 작업은 "집에서 로컬 llama.cpp를 띄우고 Scalar에서 실제 parse 흐름을 수동 검증"하는 것입니다. `LLM_*` 환경 변수, `LlmModule`, `LlmService`, `StrategyParseService`의 retry/validator 흐름은 구현되어 있습니다.
+현재 코드 기준으로 parse와 LLM 연동 수동 검증은 완료되었습니다. 다음 작업은 `StrategyRunService`를 API로 연결해서 active 전략을 수동 실행해 보고, 실행 기록이 `strategy_runs`에 남는지 검증하는 것입니다.
+
+현재 `StrategyRunService.runMockByStrategy()`는 다음 흐름을 갖습니다.
+
+1. 사용자 소유 전략을 조회합니다.
+2. 전략이 `active`인지 확인합니다.
+3. `enabled=true`인지 확인합니다.
+4. `structuredStrategy`가 `isStructuredStrategy()`를 통과하는지 확인합니다.
+5. `strategy_runs` row를 `running` 상태로 먼저 저장합니다.
+6. mock workflow를 실행합니다.
+7. 결과가 `isStrategyRunResult()`를 통과하면 run을 `succeeded`로 업데이트합니다.
+8. 실패하면 run을 `failed`로 업데이트하고 `errorMessage`를 저장합니다.
+9. 성공 시 전략의 `nextRunAt`을 다음 실행 예정 시간으로 갱신합니다.
+
+바로 이어서 할 작업:
+
+- `StrategyRunController` 생성
+- `POST /strategies/:id/runs/mock` 같은 수동 실행 API 연결
+- `JwtAuthGuard`, `CurrentUser` 적용
+- 응답을 `StrategyRunResponseDto.fromEntity()`로 통일
+- Scalar 문서 decorator 추가
+- Scalar에서 로그인 후 active 전략을 실행해 `strategy_runs` 저장 결과 확인
+
+주의할 점:
+
+- 이 단계는 아직 실제 주문이나 실제 LangGraph 실행이 아니라 mock 실행 기록 검증 단계입니다.
+- scheduler가 붙기 전까지는 수동 API로 실행 흐름을 검증합니다.
+- scheduler를 붙일 때는 중복 실행 방지를 반드시 추가해야 합니다.
+- 실제 workflow가 길어지면 step별 저장 테이블이나 `result.steps` 구조를 더 세밀하게 조정할 수 있습니다.
 
 ### 16.1 다른 컴퓨터에서 시작 직후 확인
 
@@ -1486,12 +1554,12 @@ PATCH /admin/users/:id/trading-permissions
 
 - `next_run_at`, `enabled`, `locked_until`, `failure_count` 기반 claim
 - 중복 실행 방지
-- `graph_runs` 생성
+- 실행 대상 전략마다 `strategy_runs` 생성
 
 ### Phase 4. Workflow Run
 
-- run 상태 저장
-- step 상태 저장
+- `strategy_runs` 상태 저장
+- `StrategyRunResult.steps` 또는 별도 step 테이블에 단계별 상태 저장
 - SSE 또는 WebSocket으로 실행 상태 전달
 
 ### Phase 5. Risk Engine

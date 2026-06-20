@@ -9,6 +9,7 @@ import {
 import { UserService } from '@/user/services/user.service';
 import { StrategyParseService } from './strategy-parse.service';
 
+import { calculateNextRunAt } from '../utils/calculate-next-run-at';
 import { isStructuredStrategy } from '../validators/structured-strategy.validator';
 
 import { StrategyStatus } from '../enums/strategy-status.enum';
@@ -204,26 +205,6 @@ export class StrategyService {
     return this.strategyRepository.save(strategy);
   }
 
-  // 다음 전략 실행 시점을 계산하는 로직
-  private calculateNextRunAt(
-    scheduleAnchorAt: Date,
-    intervalMinutes: number,
-  ): Date {
-    const now = new Date();
-
-    if (scheduleAnchorAt > now) {
-      return scheduleAnchorAt;
-    }
-
-    const intervalMs = intervalMinutes * 60 * 1000;
-    const elapsedMs = now.getTime() - scheduleAnchorAt.getTime();
-    const elapsedIntervals = Math.floor(elapsedMs / intervalMs);
-
-    return new Date(
-      scheduleAnchorAt.getTime() + (elapsedIntervals + 1) * intervalMs,
-    );
-  }
-
   // active 상태로 전략 상태 변경
   private activateStrategy(strategy: StrategyEntity): void {
     if (!isStructuredStrategy(strategy.structuredStrategy)) {
@@ -234,7 +215,7 @@ export class StrategyService {
 
     strategy.strategyStatus = StrategyStatus.ACTIVE;
     strategy.enabled = true;
-    strategy.nextRunAt = this.calculateNextRunAt(
+    strategy.nextRunAt = calculateNextRunAt(
       strategy.scheduleAnchorAt,
       strategy.intervalMinutes,
     );
