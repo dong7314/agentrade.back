@@ -7,6 +7,7 @@ import { UserModule } from '@/user/user.module';
 import { StrategyService } from './services/strategy.service';
 import { StrategyRunService } from './services/strategy-run.service';
 import { StrategyParseService } from './services/strategy-parse.service';
+import { StrategySchedulerService } from './services/strategy-scheduler.service';
 
 import { StrategyController } from './controllers/strategy.controller';
 import { StrategyRunController } from './controllers/strategy-run.controller';
@@ -21,6 +22,11 @@ import { StrategyRunEntity } from './entities/strategy-run.entity';
     LlmModule,
   ],
   controllers: [StrategyController, StrategyRunController],
-  providers: [StrategyService, StrategyParseService, StrategyRunService],
+  providers: [
+    StrategyService,
+    StrategyRunService,
+    StrategyParseService,
+    StrategySchedulerService,
+  ],
 })
 export class StrategyModule {}
