@@ -78,4 +78,12 @@ export class StrategyRunResponseDto {
       updatedAt: strategyRun.updatedAt,
     };
   }
+
+  static fromEntities(
+    strategyRun: StrategyRunEntity[],
+  ): StrategyRunResponseDto[] {
+    return strategyRun.map((strategy) =>
+      StrategyRunResponseDto.fromEntity(strategy),
+    );
+  }
 }

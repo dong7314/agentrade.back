@@ -12,10 +12,13 @@ import { StrategyRunEntity } from '../entities/strategy-run.entity';
 import { calculateNextRunAt } from '../utils/calculate-next-run-at';
 import { isStrategyRunResult } from '../validators/strategy-run-result.validator';
 import { isStructuredStrategy } from '../validators/structured-strategy.validator';
+import { createPaginationMeta } from '@/common/utils/create-pagination-meta';
 
 import { StrategyStatus } from '../enums/strategy-status.enum';
 import { StrategyRunStatus } from '../enums/strategy-run-status.enum';
 import { StrategyRunResult } from '../types/strategy-run-result.type';
+import { FindStrategyRunsQueryDto } from '../dto/find-strategy-run.query.dto';
+import { PaginatedResult } from '@/common/types/paginated.type';
 
 @Injectable()
 export class StrategyRunService {
@@ -27,6 +30,50 @@ export class StrategyRunService {
     private readonly dataSource: DataSource,
   ) {}
 
+  // 페이지를 통해서 전략 이력들 아이템을 가져오는 메서드
+  async findAllByUserId(
+    userId: number,
+    query: FindStrategyRunsQueryDto,
+  ): Promise<PaginatedResult<StrategyRunEntity>> {
+    const { page, limit } = query;
+
+    const [items, total] = await this.strategyRunRepository.findAndCount({
+      where: {
+        userId,
+        ...(query.status ? { status: query.status } : {}),
+        ...(query.strategyId ? { strategyId: query.strategyId } : {}),
+      },
+      order: { createdAt: 'DESC' },
+      skip: (page - 1) * limit,
+      take: limit,
+    });
+
+    return {
+      items,
+      meta: createPaginationMeta({ page, limit, total }),
+    };
+  }
+
+  // 전략 이력 하나를 찾는 메서드
+  async findOneByStrategyRunId(
+    strategyRunId: number,
+    userId: number,
+  ): Promise<StrategyRunEntity> {
+    const strategyRun = await this.strategyRunRepository.findOne({
+      where: {
+        id: strategyRunId,
+        userId,
+      },
+    });
+
+    if (!strategyRun) {
+      throw new NotFoundException('전략 이력이 존재하지 않습니다.');
+    }
+
+    return strategyRun;
+  }
+
+  // 목 데이터로 전략 이력 생성
   async runMockByStrategy(input: {
     userId: number;
     strategyId: number;
