@@ -5,6 +5,7 @@ import { StrategyEntity } from '../entities/strategy.entity';
 import { UpbitAuthService } from '@/upbit/services/upbit.auth.service';
 import { UpbitPublicService } from '@/upbit/services/upbit.public.service';
 import { UpbitPrivateService } from '@/upbit/services/upbit.private.service';
+import { PaperPortfolioService } from '@/paper-trading/services/paper-portfolio.service';
 
 import { toUpbitMinuteUnit } from '@/upbit/types/candle/upbit-minute-unit.type';
 import { isStructuredStrategy } from '../validators/structured-strategy.validator';
@@ -14,6 +15,7 @@ import {
   StrategyRunStepResult,
 } from '../types/strategy-run-result.type';
 import { StructuredStrategy } from '../types/structured-strategy.type';
+import { StrategyMode } from '../enums/strategy-mode.enum';
 
 @Injectable()
 export class StrategyExecutionService {
@@ -21,6 +23,7 @@ export class StrategyExecutionService {
     private readonly upbitAuthService: UpbitAuthService,
     private readonly upbitPublicService: UpbitPublicService,
     private readonly upbitPrivateService: UpbitPrivateService,
+    private readonly paperPortfolioService: PaperPortfolioService,
   ) {}
 
   async execute(strategy: StrategyEntity): Promise<StrategyRunResult> {
@@ -63,6 +66,14 @@ export class StrategyExecutionService {
   private async collectMarketData(
     structuredStrategy: StructuredStrategy,
   ): Promise<StrategyRunStepResult> {
+    if (!structuredStrategy.dataPermissions.allowMarketData) {
+      return {
+        name: 'market_data',
+        status: 'skipped',
+        summary: '전략 설정에서 시장 데이터 조회를 허용하지 않아 생략했습니다.',
+      };
+    }
+
     const market = structuredStrategy.marketDataConfig.symbol;
     const timeframes = structuredStrategy.marketDataConfig.timeframes;
 
@@ -102,24 +113,40 @@ export class StrategyExecutionService {
   private async collectPortfolio(
     strategy: StrategyEntity,
   ): Promise<StrategyRunStepResult> {
-    const credential = await this.upbitAuthService.getDecryptedCredential(
-      strategy.userId,
-    );
+    // 가상 투자일 시에는 paper portfolio를 전달
+    if (strategy.strategyMode === StrategyMode.PAPER) {
+      const portfolio = await this.paperPortfolioService.getPortfolio({
+        userId: strategy.userId,
+        market: strategy.market,
+      });
 
-    const balances = await this.upbitPrivateService.getAccounts({
-      accessKey: credential.accessKey,
-      secretKey: credential.secretKey,
-    });
+      return {
+        name: 'portfolio',
+        status: 'succeeded',
+        summary: 'paper trading 가상 포트폴리오를 조회했습니다.',
+        output: portfolio,
+      };
+    } else {
+      // 실제 live 트레이딩 시 업비트 계좌를 조회한 후 계좌 데이터 전달
+      const credential = await this.upbitAuthService.getDecryptedCredential(
+        strategy.userId,
+      );
 
-    return {
-      name: 'portfolio',
-      status: 'succeeded',
-      summary: `업비트 자산 ${balances.length}개를 조회했습니다.`,
-      output: {
-        balanceCount: balances.length,
-        balances,
-      },
-    };
+      const balances = await this.upbitPrivateService.getAccounts({
+        accessKey: credential.accessKey,
+        secretKey: credential.secretKey,
+      });
+
+      return {
+        name: 'portfolio',
+        status: 'succeeded',
+        summary: `업비트 자산 ${balances.length}개를 조회했습니다.`,
+        output: {
+          balanceCount: balances.length,
+          balances,
+        },
+      };
+    }
   }
 
   // 뉴스 데이터 수집

@@ -1,10 +1,42 @@
 # Agentrade Backend Plan
 
-최종 업데이트: 2026-06-22
+최종 업데이트: 2026-06-23
 
 이 문서는 `backend` 폴더에서 현재까지 어디까지 개발했는지, 이번 세션에서 어떤 방식으로 학습/개발을 진행했는지, 다른 컴퓨터에서 이어서 작업할 때 무엇부터 확인하면 되는지 정리한 인수인계 문서입니다.
 
-현재 백엔드는 NestJS + TypeORM + PostgreSQL + Scalar 기반으로 로컬 회원가입/로그인, 쿠키 기반 access/refresh token, DB 세션, Naver/Kakao OAuth 로그인, 전략 생성/목록/상세/수정/상태 변경/LLM 구조화 흐름까지 1차 구현된 상태입니다. 또한 `strategy_runs` 기반 실행 이력 저장/조회, `POST /strategies/:id/run` 수동 실행 API, `@nestjs/schedule` 기반 자동 실행 흐름, 실제 Upbit 캔들 수집, 사용자별 Upbit credential 암호화 저장, Upbit 자산 조회 기반 portfolio step까지 진행된 상태입니다.
+현재 백엔드는 NestJS + TypeORM + PostgreSQL + Scalar 기반으로 로컬 회원가입/로그인, 쿠키 기반 access/refresh token, DB 세션, Naver/Kakao OAuth 로그인, 전략 생성/목록/상세/수정/상태 변경/LLM 구조화 흐름까지 1차 구현된 상태입니다. 또한 `strategy_runs` 기반 실행 이력 저장/조회, `POST /strategies/:id/run` 수동 실행 API, `@nestjs/schedule` 기반 자동 실행 흐름, 실제 Upbit 캔들 수집, 사용자별 Upbit credential 암호화 저장, live portfolio 조회, paper portfolio 조회 분기까지 진행된 상태입니다.
+
+2026-06-23 현재 중요한 진행 상태:
+
+- `src/paper-trading` 모듈을 추가했습니다.
+- `PaperAccountEntity`와 `PaperPositionEntity`를 추가했습니다.
+- `paper_accounts`, `paper_positions` 테이블 생성을 위한 migration을 생성하고 적용했습니다.
+- `PaperPortfolioService.getPortfolio()`를 추가해 사용자별 paper account와 market별 paper position을 조회합니다.
+- `PaperPortfolioService.createDefaultAccountForUser()`를 추가해 기본 가상 계좌를 생성합니다.
+- 로컬 회원가입 시 `UserService.createLocalUser()`에서 사용자 저장 후 기본 paper account를 자동 생성합니다.
+- Naver/Kakao 소셜 로그인 흐름에서도 로그인 대상 user가 확정된 뒤 기본 paper account를 보장하도록 변경했습니다.
+- 이미 존재하는 사용자에게는 `paper_accounts` backfill SQL로 기본 가상 계좌를 채울 수 있습니다.
+- `StrategyExecutionService.collectPortfolio()`를 `strategy.strategyMode` 기준으로 분기했습니다.
+- `paper` 전략은 `PaperPortfolioService`의 paper portfolio를 조회합니다.
+- `live` 전략은 기존처럼 Upbit credential 복호화 후 Upbit `/v1/accounts`를 조회합니다.
+- paper 전략 실행 시 Upbit credential 없이도 portfolio step이 성공하는 방향으로 정리했습니다.
+- 현재 `StrategyExecutionService.execute()` 기준 다음 mock 단계는 `news`입니다.
+- 다음 작업은 `NewsDataService` skeleton을 만들고 `collectNews()`를 async 서비스 기반으로 분리하는 것입니다.
+- 2026-06-23 기준 아래 검증은 통과했습니다.
+
+```bash
+pnpm exec tsc --noEmit
+pnpm exec eslint "src/user/**/*.ts" "src/auth/**/*.ts" "src/paper-trading/**/*.ts"
+```
+
+다음 작업 방향:
+
+- `src/news` 또는 `src/strategy/services/news-data.service.ts` 형태로 뉴스 수집 책임을 분리합니다.
+- `StrategyExecutionService.collectNews()`를 async로 변경합니다.
+- `structuredStrategy.dataPermissions.allowNewsSearch=false`이면 기존처럼 `skipped`를 반환합니다.
+- `allowNewsSearch=true`이면 `NewsDataService`를 호출해 기사 목록 형태의 output을 반환합니다.
+- 처음에는 mock news provider로 시작하고, 이후 실제 검색 API 또는 뉴스 API를 연결합니다.
+- news step이 안정화되면 그 다음 순서로 AI decision, risk check, paper order 순서로 확장합니다.
 
 2026-06-22 현재 중요한 진행 상태:
 
@@ -24,8 +56,8 @@
 - `PUT /upbit/credential`, `GET /upbit/credential` API를 추가했고 Scalar 문서도 연결했습니다.
 - `UpbitAuthService`는 credential 암호화/복호화와 Upbit JWT 생성 책임을 가집니다.
 - `UpbitPrivateService`는 DB에서 복호화한 credential을 입력받아 Upbit `/v1/accounts`를 호출합니다.
-- `StrategyExecutionService`의 portfolio step은 현재 Upbit credential 기반 실제 자산 조회를 사용합니다.
-- 현재 paper trading 전용 portfolio 구조는 아직 없습니다. 다음 작업은 `paper` 전략은 paper portfolio를 보고, `live` 전략은 Upbit 실제 자산을 보도록 분기하는 것입니다.
+- 2026-06-22 당시 `StrategyExecutionService`의 portfolio step은 Upbit credential 기반 실제 자산 조회를 사용했습니다.
+- 2026-06-22 당시 paper trading 전용 portfolio 구조는 아직 없었고, 다음 작업은 `paper` 전략은 paper portfolio를 보고 `live` 전략은 Upbit 실제 자산을 보도록 분기하는 것이었습니다.
 - 2026-06-22 기준 아래 검증은 통과했습니다.
 
 ```bash
@@ -33,7 +65,7 @@ pnpm exec tsc --noEmit
 pnpm exec eslint "src/upbit/**/*.ts" "src/strategy/**/*.ts"
 ```
 
-다음 작업 방향:
+2026-06-22 당시 다음 작업 방향:
 
 - `StrategyExecutionService.collectPortfolio()`를 `strategy.strategyMode` 기준으로 분기합니다.
 - `paper` 전략은 paper trading용 가상 포트폴리오를 조회하고, `live` 전략은 Upbit 실제 `/v1/accounts`를 조회하도록 바꿉니다.
@@ -1296,7 +1328,7 @@ psql -d agentrade -c "select id, user_id, name, market, strategy_mode, strategy_
 
 ## 16. 바로 다음 작업 추천
 
-현재 코드 기준으로 parse와 LLM 연동 수동 검증, active 전환, scheduler 기반 run 생성, `strategy_runs` 기록 저장/조회, `POST /strategies/:id/run` 수동 실행 API, `StrategyExecutionService` 기반 workflow 분리, 실제 Upbit 캔들 수집, 사용자별 Upbit credential 암호화 저장, Upbit 자산 조회 기반 portfolio step까지 진행되었습니다. 다음 작업은 paper trading 전략과 live trading 전략의 portfolio 조회 흐름을 분리하는 것입니다.
+현재 코드 기준으로 parse와 LLM 연동 수동 검증, active 전환, scheduler 기반 run 생성, `strategy_runs` 기록 저장/조회, `POST /strategies/:id/run` 수동 실행 API, `StrategyExecutionService` 기반 workflow 분리, 실제 Upbit 캔들 수집, 사용자별 Upbit credential 암호화 저장, live portfolio 조회, paper portfolio 조회 분기까지 진행되었습니다. 다음 작업은 `StrategyExecutionService`의 `news` step을 실제 서비스로 분리하는 것입니다.
 
 현재 `StrategyRunService.runByStrategy()`는 다음 흐름을 갖습니다.
 
@@ -1307,7 +1339,7 @@ psql -d agentrade -c "select id, user_id, name, market, strategy_mode, strategy_
 5. 같은 전략의 `running` 실행 이력이 이미 있는지 확인합니다.
 6. `strategy_runs` row를 `running` 상태로 먼저 저장합니다.
 7. `StrategyExecutionService.execute(strategy)`를 호출합니다.
-8. `StrategyExecutionService`는 `structuredStrategy`를 기반으로 실제 Upbit market data, Upbit portfolio, news, AI decision, risk check, order 단계 결과를 만듭니다.
+8. `StrategyExecutionService`는 `structuredStrategy`를 기반으로 market data, portfolio, news, AI decision, risk check, order 단계 결과를 만듭니다.
 9. 결과가 `isStrategyRunResult()`를 통과하면 run을 `succeeded`로 업데이트합니다.
 10. 실패하면 run을 `failed`로 업데이트하고 `errorMessage`를 저장합니다.
 11. 성공 시 전략의 `nextRunAt`을 다음 실행 예정 시간으로 갱신합니다.
@@ -1320,25 +1352,24 @@ psql -d agentrade -c "select id, user_id, name, market, strategy_mode, strategy_
 
 바로 이어서 할 작업:
 
-- `PaperTradingModule` 생성
-- `PaperPortfolioService` 생성
-- `StrategyModule`에 `PaperTradingModule` import
-- `StrategyExecutionService.collectPortfolio(strategy)`를 `strategy.strategyMode` 기준으로 분기
-- `paper` 전략은 `PaperPortfolioService`에서 가상 자산을 조회
-- `live` 전략은 기존처럼 `UpbitAuthService.getDecryptedCredential()`과 `UpbitPrivateService.getAccounts()`로 실제 Upbit 자산 조회
-- paper 전략 실행 시 Upbit credential이 없어도 `portfolio` step이 성공하는지 확인
-- live 전략 실행 시 Upbit credential이 없으면 실패하는지 확인
-- 이후 paper trading DB 테이블 설계로 확장
+- `NewsDataService` skeleton을 추가합니다.
+- `StrategyExecutionService.collectNews()`를 async로 변경합니다.
+- `allowNewsSearch=false`이면 `news` step을 `skipped`로 유지합니다.
+- `allowNewsSearch=true`이면 `NewsDataService`를 호출합니다.
+- 초기 `NewsDataService`는 mock 기사 목록을 반환해도 됩니다.
+- news step output은 `articles`, `query`, `fetchedAt` 정도의 구조로 시작합니다.
+- `POST /strategies/:id/run` 후 `GET /strategy-runs/:runId`에서 `news` step output이 저장되는지 확인합니다.
+- 이후 실제 검색 API 또는 뉴스 API를 연결합니다.
 
 추천 폴더 구조:
 
 ```txt
-src/paper-trading/
-  paper-trading.module.ts
+src/news/
+  news.module.ts
   services/
-    paper-portfolio.service.ts
+    news-data.service.ts
   types/
-    paper-portfolio.type.ts
+    news-article.type.ts
 ```
 
 주의할 점:
@@ -1348,7 +1379,9 @@ src/paper-trading/
 - `live` 전략은 아직 주문 실행으로 연결하지 않습니다.
 - `live` 전략은 `user.liveTradingEnabled`, human review, risk check 정책이 붙기 전까지 읽기 중심으로만 유지합니다.
 - `CREDENTIAL_ENCRYPTION_KEY`는 credential 저장/복호화에 필수입니다.
-- 뉴스 수집도 우선 `NewsDataService` skeleton만 만들고, 나중에 검색 API 또는 뉴스 API를 연결합니다.
+- 뉴스 수집은 우선 `NewsDataService` skeleton만 만들고, 나중에 검색 API 또는 뉴스 API를 연결합니다.
+- `allowNewsSearch=false`인 전략에서는 외부 뉴스 검색을 호출하면 안 됩니다.
+- 실제 뉴스 API를 붙이기 전까지는 mock provider로 실행 결과 구조만 먼저 안정화합니다.
 - 이후 LangGraph로 전환할 때는 market data, portfolio, news 수집 흐름이 `collect_data` 노드의 내부 구현이 될 가능성이 큽니다.
 
 완료 후 확인할 흐름:
@@ -1369,6 +1402,8 @@ GET /strategy-runs/:runId
 - `portfolio` 단계가 있습니다.
 - paper 전략에서는 paper portfolio가 반환됩니다.
 - live 전략에서는 Upbit 실제 balances가 반환됩니다.
+- `allowNewsSearch=true`인 전략에서는 `news.output.articles`가 반환됩니다.
+- `allowNewsSearch=false`인 전략에서는 `news.status=skipped`가 반환됩니다.
 - `ai_decision`, `risk_check`, `order`는 아직 mock이어도 됩니다.
 
 검증 명령어:
@@ -1380,8 +1415,9 @@ pnpm exec eslint "src/**/*.ts"
 
 그 다음 작업:
 
-- paper trading DB 테이블을 설계합니다.
-- news 수집 서비스를 붙입니다.
+- AI decision 단계를 LLM 또는 별도 decision service로 분리합니다.
+- risk check 단계를 실제 정책 기반으로 구현합니다.
+- paper order / paper fill 테이블과 가상 체결 로직을 설계합니다.
 - AI decision 단계는 나중에 LangGraph 또는 별도 decision service로 이동합니다.
 
 ### 16.1 다른 컴퓨터에서 시작 직후 확인
@@ -1694,8 +1730,9 @@ PATCH /admin/users/:id/trading-permissions
 - `POST /strategies/:id/run` 수동 실행 API 추가 완료
 - Upbit public candle API 기반 실제 market data 수집 완료
 - Upbit credential 암호화 저장과 private account API 기반 live portfolio 조회 완료
-- 다음 작업: paper/live portfolio 조회 분기
-- 이후 작업: news data, AI decision, risk check 연결
+- paper/live portfolio 조회 분기 완료
+- 다음 작업: news data 수집 서비스 분리
+- 이후 작업: AI decision, risk check 연결
 - SSE 또는 WebSocket으로 실행 상태 전달
 
 ### Phase 5. Risk Engine
@@ -1710,11 +1747,11 @@ PATCH /admin/users/:id/trading-permissions
 
 ### Phase 6. Paper Trading
 
-- 다음 작업: paper 전략 실행 시 Upbit 실제 자산 대신 paper portfolio를 조회하도록 분기
-- 가상 계좌
-- 가상 포지션
-- 가상 주문
-- 가상 체결
+- paper 전략 실행 시 Upbit 실제 자산 대신 paper portfolio를 조회하도록 분기 완료
+- 가상 계좌 기본 생성 완료
+- 가상 포지션 조회 구조 완료
+- 다음 작업: 가상 주문
+- 다음 작업: 가상 체결
 - 포트폴리오 화면용 API
 
 ### Phase 7. Audit Log

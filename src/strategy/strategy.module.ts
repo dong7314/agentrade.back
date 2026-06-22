@@ -4,6 +4,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { LlmModule } from '@/llm/llm.module';
 import { UserModule } from '@/user/user.module';
 import { UpbitModule } from '@/upbit/upbit.module';
+import { PaperTradingModule } from '@/paper-trading/paper-trading.module';
 
 import { StrategyService } from './services/strategy.service';
 import { StrategyRunService } from './services/strategy-run.service';
@@ -23,6 +24,7 @@ import { StrategyRunEntity } from './entities/strategy-run.entity';
     UserModule,
     LlmModule,
     UpbitModule,
+    PaperTradingModule,
   ],
   controllers: [StrategyController, StrategyRunController],
   providers: [

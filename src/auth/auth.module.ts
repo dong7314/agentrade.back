@@ -1,7 +1,9 @@
 import { Module } from '@nestjs/common';
+import { TypeOrmModule } from '@nestjs/typeorm';
+
 import { JwtModule } from '@nestjs/jwt';
 import { UserModule } from '@/user/user.module';
-import { TypeOrmModule } from '@nestjs/typeorm';
+import { PaperTradingModule } from '@/paper-trading/paper-trading.module';
 
 import { JwtStrategy } from './strategies/jwt.strategy';
 import { AuthService } from './services/auth.service';
@@ -20,6 +22,7 @@ import { SocialAccountEntity } from './entities/social-account.entity';
     TypeOrmModule.forFeature([AuthSessionEntity, SocialAccountEntity]),
     JwtModule.register({}),
     UserModule,
+    PaperTradingModule,
   ],
   controllers: [AuthController],
   providers: [

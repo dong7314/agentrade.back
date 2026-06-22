@@ -3,14 +3,16 @@ import { InjectRepository } from '@nestjs/typeorm';
 
 import { Repository } from 'typeorm';
 
+import { PaperPortfolioService } from '@/paper-trading/services/paper-portfolio.service';
+
 import { UserEntity } from '../entities/user.entity';
-import { AuthProvider } from '@/common/enums/auth-provider.enum';
 
 @Injectable()
 export class UserService {
   constructor(
     @InjectRepository(UserEntity)
-    private userRepository: Repository<UserEntity>,
+    private readonly userRepository: Repository<UserEntity>,
+    private readonly paperPortfolioService: PaperPortfolioService,
   ) {}
 
   // email을 통해서 사용자 정보 찾기
@@ -50,26 +52,10 @@ export class UserService {
       name: input.name,
     });
 
+    // 사용자 저장
     const savedUser = await this.userRepository.save(user);
-
-    return savedUser;
-  }
-
-  // 소셜 회원가입
-  async createSocialUser(input: {
-    email: string;
-    name: string;
-    provider: AuthProvider;
-    providerId: string;
-  }): Promise<UserEntity> {
-    const user = this.userRepository.create({
-      email: input.email,
-      name: input.name,
-      provider: input.provider,
-      providerId: input.providerId,
-    });
-
-    const savedUser = await this.userRepository.save(user);
+    // 가상 계좌 저장
+    await this.paperPortfolioService.createDefaultAccountForUser(savedUser.id);
 
     return savedUser;
   }

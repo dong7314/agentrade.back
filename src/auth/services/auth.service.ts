@@ -13,6 +13,7 @@ import { UserService } from '@/user/services/user.service';
 import { ConfigService } from '@nestjs/config';
 import { AuthSessionService } from './auth-session.service';
 import { SocialAccountService } from './social-account.service';
+import { PaperPortfolioService } from '@/paper-trading/services/paper-portfolio.service';
 
 import { UserEntity } from '@/user/entities/user.entity';
 import { SocialAccountEntity } from '../entities/social-account.entity';
@@ -38,6 +39,7 @@ export class AuthService {
     private readonly configService: ConfigService,
     private readonly authSessionService: AuthSessionService,
     private readonly socialAccountService: SocialAccountService,
+    private readonly paperPortfolioService: PaperPortfolioService,
   ) {}
 
   async register(dto: LocalRegisterDto): Promise<UserResponseDto> {
@@ -217,7 +219,7 @@ export class AuthService {
   }): Promise<UserEntity> {
     try {
       // 트렌젝션 처리로 db 저장 흐름 그룹핑
-      return this.dataSource.transaction(async (manager) => {
+      const user = await this.dataSource.transaction(async (manager) => {
         const userRepository = manager.getRepository(UserEntity);
         const socialAccountRepository =
           manager.getRepository(SocialAccountEntity);
@@ -259,10 +261,16 @@ export class AuthService {
           displayName: input.displayName,
         });
 
+        // 소셜 계정 생성
         await socialAccountRepository.save(socialAccount);
 
         return user;
       });
+
+      // 가상 계좌 생성
+      await this.paperPortfolioService.createDefaultAccountForUser(user.id);
+
+      return user;
     } catch (error) {
       // 유니크 위배 시에 계정 정보 재조회 진행
       if (isUniqueViolation(error)) {

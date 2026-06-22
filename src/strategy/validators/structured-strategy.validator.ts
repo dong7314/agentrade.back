@@ -18,6 +18,28 @@ function isRiskLevel(
   );
 }
 
+function isSupportedTimeframe(value: unknown): value is string {
+  return (
+    value === '1m' ||
+    value === '3m' ||
+    value === '5m' ||
+    value === '10m' ||
+    value === '15m' ||
+    value === '30m' ||
+    value === '1h' ||
+    value === '4h'
+  );
+}
+
+function isSupportedTimeframeArray(value: unknown): value is string[] {
+  return (
+    Array.isArray(value) &&
+    value.length >= 1 &&
+    value.length <= 3 &&
+    value.every(isSupportedTimeframe)
+  );
+}
+
 export function isStructuredStrategy(
   value: unknown,
 ): value is StructuredStrategy {
@@ -73,8 +95,17 @@ export function isStructuredStrategy(
 
   if (
     typeof value.marketDataConfig.symbol !== 'string' ||
-    !isStringArray(value.marketDataConfig.timeframes) ||
-    typeof value.marketDataConfig.primaryTimeframe !== 'string'
+    !isSupportedTimeframeArray(value.marketDataConfig.timeframes) ||
+    typeof value.marketDataConfig.primaryTimeframe !== 'string' ||
+    !isSupportedTimeframe(value.marketDataConfig.primaryTimeframe)
+  ) {
+    return false;
+  }
+
+  if (
+    !value.marketDataConfig.timeframes.includes(
+      value.marketDataConfig.primaryTimeframe,
+    )
   ) {
     return false;
   }

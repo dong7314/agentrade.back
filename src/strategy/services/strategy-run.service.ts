@@ -151,7 +151,15 @@ export class StrategyRunService {
           ? error.message
           : '알 수 없는 에러가 발생하였습니다.';
 
-      return this.strategyRunRepository.save(strategyRun);
+      strategy.nextRunAt = calculateNextRunAt(
+        strategy.scheduleAnchorAt,
+        strategy.intervalMinutes,
+      );
+
+      return this.dataSource.transaction(async (manager) => {
+        await manager.save(StrategyEntity, strategy);
+        return manager.save(StrategyRunEntity, strategyRun);
+      });
     }
   }
 
