@@ -9,16 +9,17 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { StrategyEntity } from '../entities/strategy.entity';
 import { StrategyRunEntity } from '../entities/strategy-run.entity';
 
+import { StrategyExecutionService } from './strategy-execution.service';
+
 import { calculateNextRunAt } from '../utils/calculate-next-run-at';
 import { isStrategyRunResult } from '../validators/strategy-run-result.validator';
 import { isStructuredStrategy } from '../validators/structured-strategy.validator';
 import { createPaginationMeta } from '@/common/utils/create-pagination-meta';
 
 import { StrategyStatus } from '../enums/strategy-status.enum';
-import { StrategyRunStatus } from '../enums/strategy-run-status.enum';
-import { StrategyRunResult } from '../types/strategy-run-result.type';
-import { FindStrategyRunsQueryDto } from '../dto/find-strategy-run.query.dto';
 import { PaginatedResult } from '@/common/types/paginated.type';
+import { StrategyRunStatus } from '../enums/strategy-run-status.enum';
+import { FindStrategyRunsQueryDto } from '../dto/find-strategy-run.query.dto';
 
 @Injectable()
 export class StrategyRunService {
@@ -28,6 +29,7 @@ export class StrategyRunService {
     @InjectRepository(StrategyRunEntity)
     private readonly strategyRunRepository: Repository<StrategyRunEntity>,
     private readonly dataSource: DataSource,
+    private readonly strategyExecutionService: StrategyExecutionService,
   ) {}
 
   // 페이지를 통해서 전략 이력들 아이템을 가져오는 메서드
@@ -74,7 +76,7 @@ export class StrategyRunService {
   }
 
   // 목 데이터로 전략 이력 생성
-  async runMockByStrategy(input: {
+  async runByStrategy(input: {
     userId: number;
     strategyId: number;
   }): Promise<StrategyRunEntity> {
@@ -103,6 +105,8 @@ export class StrategyRunService {
       );
     }
 
+    await this.assertNoRunningRun(strategy.id);
+
     const now = new Date();
 
     const strategyRun = await this.strategyRunRepository.save(
@@ -118,7 +122,7 @@ export class StrategyRunService {
     );
 
     try {
-      const result = this.executeMockWorkflow(strategy);
+      const result = await this.strategyExecutionService.execute(strategy);
 
       if (!isStrategyRunResult(result)) {
         throw new BadRequestException(
@@ -151,44 +155,17 @@ export class StrategyRunService {
     }
   }
 
-  // mock workflow 반환
-  private executeMockWorkflow(strategy: StrategyEntity): StrategyRunResult {
-    return {
-      decision: 'hold',
-      reason: 'mock execution only',
-      confidence: 0.5,
-      steps: [
-        {
-          name: 'market_data',
-          status: 'skipped',
-          summary: 'mock 실행에서는 시장 데이터 조회를 생략했습니다.',
-        },
-        {
-          name: 'news',
-          status: 'skipped',
-          summary: 'mock 실행에서는 뉴스 조회를 생략했습니다.',
-        },
-        {
-          name: 'ai_decision',
-          status: 'succeeded',
-          summary: 'mock 판단으로 hold를 반환했습니다.',
-        },
-        {
-          name: 'risk_check',
-          status: 'skipped',
-          summary: 'mock 실행에서는 리스크 검사를 생략했습니다.',
-        },
-        {
-          name: 'order',
-          status: 'skipped',
-          summary: 'mock 실행에서는 주문을 생성하지 않았습니다.',
-        },
-      ],
-      strategy: {
-        id: strategy.id,
-        market: strategy.market,
-        intervalMinutes: strategy.intervalMinutes,
+  // 전략이 지금 현재 실행중인지 체크하는 메서드
+  private async assertNoRunningRun(strategyId: number): Promise<void> {
+    const runningRun = await this.strategyRunRepository.findOne({
+      where: {
+        strategyId,
+        status: StrategyRunStatus.RUNNING,
       },
-    };
+    });
+
+    if (runningRun) {
+      throw new BadRequestException('이미 실행 중인 전략입니다.');
+    }
   }
 }

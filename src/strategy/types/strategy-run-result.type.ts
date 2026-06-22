@@ -3,6 +3,7 @@ export type StrategyRunStepStatus = 'succeeded' | 'failed' | 'skipped';
 export type StrategyRunStepResult = {
   name:
     | 'market_data'
+    | 'portfolio'
     | 'news'
     | 'indicator_analysis'
     | 'ai_decision'

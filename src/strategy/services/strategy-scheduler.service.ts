@@ -1,5 +1,5 @@
 import { LessThanOrEqual, Repository } from 'typeorm';
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 
 import { StrategyRunService } from './strategy-run.service';
@@ -28,10 +28,14 @@ export class StrategySchedulerService {
     });
 
     for (const strategy of strategies) {
-      await this.strategyRunService.runMockByStrategy({
-        userId: strategy.userId,
-        strategyId: strategy.id,
-      });
+      try {
+        await this.strategyRunService.runByStrategy({
+          userId: strategy.userId,
+          strategyId: strategy.id,
+        });
+      } catch (error) {
+        Logger.log(error);
+      }
     }
   }
 }

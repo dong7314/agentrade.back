@@ -1,10 +1,45 @@
 # Agentrade Backend Plan
 
-최종 업데이트: 2026-06-21
+최종 업데이트: 2026-06-22
 
 이 문서는 `backend` 폴더에서 현재까지 어디까지 개발했는지, 이번 세션에서 어떤 방식으로 학습/개발을 진행했는지, 다른 컴퓨터에서 이어서 작업할 때 무엇부터 확인하면 되는지 정리한 인수인계 문서입니다.
 
-현재 백엔드는 NestJS + TypeORM + PostgreSQL + Scalar 기반으로 로컬 회원가입/로그인, 쿠키 기반 access/refresh token, DB 세션, Naver/Kakao OAuth 로그인, 전략 생성/목록/상세/수정/상태 변경/LLM 구조화 흐름까지 1차 구현된 상태입니다. 또한 `strategy_runs` 기반 실행 이력 저장/조회와 `@nestjs/schedule` 기반 mock 자동 실행 흐름까지 1차 검증된 상태입니다.
+현재 백엔드는 NestJS + TypeORM + PostgreSQL + Scalar 기반으로 로컬 회원가입/로그인, 쿠키 기반 access/refresh token, DB 세션, Naver/Kakao OAuth 로그인, 전략 생성/목록/상세/수정/상태 변경/LLM 구조화 흐름까지 1차 구현된 상태입니다. 또한 `strategy_runs` 기반 실행 이력 저장/조회, `POST /strategies/:id/run` 수동 실행 API, `@nestjs/schedule` 기반 자동 실행 흐름, 실제 Upbit 캔들 수집, 사용자별 Upbit credential 암호화 저장, Upbit 자산 조회 기반 portfolio step까지 진행된 상태입니다.
+
+2026-06-22 현재 중요한 진행 상태:
+
+- `StrategyRunService.runMockByStrategy()`를 `StrategyRunService.runByStrategy()`로 변경했습니다.
+- `StrategyRunService` 안에 있던 mock workflow 책임을 `src/strategy/services/strategy-execution.service.ts`의 `StrategyExecutionService`로 분리했습니다.
+- `StrategyRunService`는 전략 조회, 실행 가능 여부 확인, `strategy_runs` row 생성, 성공/실패 상태 저장, `nextRunAt` 갱신에 집중합니다.
+- `StrategyExecutionService`는 `strategy.structuredStrategy`를 검증한 뒤 market data, portfolio, news, AI decision, risk check, order 단계의 `StrategyRunResult`를 생성합니다.
+- `POST /strategies/:id/run` 수동 실행 API를 추가했습니다.
+- `ApiRunStrategy()`를 추가해 Scalar에서 전략 수동 실행 API를 확인할 수 있게 했습니다.
+- scheduler는 이제 조회된 전략마다 `StrategyRunService.runByStrategy()`를 호출합니다.
+- scheduler의 각 전략 실행을 `try/catch`로 감싸, 특정 전략 실행이 실패해도 다음 전략 실행 루프가 멈추지 않도록 1차 실패 격리를 추가했습니다.
+- `StrategyRunService.assertNoRunningRun()`을 추가해 같은 전략의 `running` 실행 이력이 이미 있으면 중복 실행을 막습니다.
+- `src/upbit` 모듈을 추가해 Upbit public/private API 연동 책임을 분리했습니다.
+- `UpbitPublicService`는 Upbit 분봉 캔들 API를 호출하고, `marketDataConfig.timeframes`의 최대 3개 timeframe에 대해 실제 캔들 데이터를 수집합니다.
+- `SystemPrompt`를 보강해 LLM parse 결과가 `"1m"`, `"3m"`, `"5m"`, `"10m"`, `"15m"`, `"30m"`, `"1h"`, `"4h"` 중 1~3개 timeframe을 선택하도록 유도합니다.
+- `UpbitCredentialEntity`와 `CreateUpbitCredentials` migration을 추가해 사용자별 Upbit access key/secret key를 암호화 저장합니다.
+- `PUT /upbit/credential`, `GET /upbit/credential` API를 추가했고 Scalar 문서도 연결했습니다.
+- `UpbitAuthService`는 credential 암호화/복호화와 Upbit JWT 생성 책임을 가집니다.
+- `UpbitPrivateService`는 DB에서 복호화한 credential을 입력받아 Upbit `/v1/accounts`를 호출합니다.
+- `StrategyExecutionService`의 portfolio step은 현재 Upbit credential 기반 실제 자산 조회를 사용합니다.
+- 현재 paper trading 전용 portfolio 구조는 아직 없습니다. 다음 작업은 `paper` 전략은 paper portfolio를 보고, `live` 전략은 Upbit 실제 자산을 보도록 분기하는 것입니다.
+- 2026-06-22 기준 아래 검증은 통과했습니다.
+
+```bash
+pnpm exec tsc --noEmit
+pnpm exec eslint "src/upbit/**/*.ts" "src/strategy/**/*.ts"
+```
+
+다음 작업 방향:
+
+- `StrategyExecutionService.collectPortfolio()`를 `strategy.strategyMode` 기준으로 분기합니다.
+- `paper` 전략은 paper trading용 가상 포트폴리오를 조회하고, `live` 전략은 Upbit 실제 `/v1/accounts`를 조회하도록 바꿉니다.
+- 처음에는 `PaperPortfolioService` mock으로 시작하고, 이후 `paper_accounts`, `paper_balances`, `paper_orders` 같은 테이블을 설계합니다.
+- live trading은 `user.liveTradingEnabled`, human review, risk check가 준비되기 전까지 주문 실행으로 연결하지 않습니다.
+- 뉴스 수집과 AI decision은 이후 단계에서 실제 서비스로 분리합니다.
 
 2026-06-21 현재 중요한 진행 상태:
 
@@ -12,7 +47,7 @@
 - `src/strategy/services/strategy-scheduler.service.ts`를 추가했습니다.
 - `StrategySchedulerService`는 `@Cron('*/1 * * * *')`로 1분마다 실행됩니다.
 - scheduler는 `strategyStatus=active`, `enabled=true`, `nextRunAt <= now`인 전략을 조회합니다.
-- 조회된 전략마다 내부적으로 `StrategyRunService.runMockByStrategy()`를 호출합니다.
+- 조회된 전략마다 내부적으로 `StrategyRunService.runByStrategy()`를 호출합니다.
 - active 전략이 scheduler를 통해 실행되고 `strategy_runs`에 이력이 기록되는 것까지 수동 확인했습니다.
 - `GET /strategy-runs`, `GET /strategy-runs/:runId` 조회 API를 추가했습니다.
 - `strategy_runs`는 사용자가 직접 생성하는 리소스가 아니라 서버 내부 실행 흐름에서 생성되는 실행 이력으로 취급합니다.
@@ -26,14 +61,13 @@ pnpm exec tsc --noEmit
 pnpm exec eslint "src/strategy/**/*.ts"
 ```
 
-다음 작업 방향:
+이 시점의 다음 작업 방향:
 
-- `StrategyRunService` 안의 private `executeMockWorkflow()`를 별도 `StrategyExecutionService`로 분리합니다.
-- `StrategyRunService`는 run row 생성, 상태 전환, 실패 기록, `nextRunAt` 갱신처럼 실행 이력 관리에 집중하도록 정리합니다.
-- `StrategyExecutionService`는 시장 데이터 조회, 뉴스 조회, AI 판단, 리스크 체크, 주문 보류/생성 판단을 단계별 workflow 형태로 담당합니다.
-- 처음에는 실제 외부 API 연동 없이 mock step을 유지하되, 구조만 실제 실행 파이프라인에 가깝게 나눕니다.
-- 그 다음 단계에서 `MarketDataService` 또는 AI decision용 LLM 호출을 붙입니다.
-- scheduler 중복 실행 방지는 아직 보강되지 않았습니다. 실제 운영 형태로 가기 전에 DB lock, claim 컬럼, 또는 running run 존재 여부 기반 방어를 추가해야 합니다.
+- `StrategyRunService` 안의 private `executeMockWorkflow()`를 별도 `StrategyExecutionService`로 분리합니다. 2026-06-22 기준 이 작업은 완료되었습니다.
+- `StrategyRunService`는 run row 생성, 상태 전환, 실패 기록, `nextRunAt` 갱신처럼 실행 이력 관리에 집중하도록 정리합니다. 2026-06-22 기준 이 작업은 완료되었습니다.
+- `StrategyExecutionService`는 시장 데이터 조회, 뉴스 조회, AI 판단, 리스크 체크, 주문 보류/생성 판단을 단계별 workflow 형태로 담당합니다. 2026-06-22 기준 mock 단계로 1차 분리되었습니다.
+- 그 다음 단계에서 `StrategyDataCollectionService`, `MarketDataService`, `PortfolioService`, `NewsDataService` skeleton을 붙입니다.
+- scheduler 중복 실행 방지는 `running` run 존재 여부 검사로 1차 방어를 추가했습니다. 실제 운영 형태로 가기 전에는 DB lock, claim 컬럼, 또는 트랜잭션 기반 원자적 claim 정책을 추가해야 합니다.
 
 2026-06-20 현재 중요한 진행 상태:
 
@@ -1262,35 +1296,93 @@ psql -d agentrade -c "select id, user_id, name, market, strategy_mode, strategy_
 
 ## 16. 바로 다음 작업 추천
 
-현재 코드 기준으로 parse와 LLM 연동 수동 검증, active 전환, scheduler 기반 mock run 생성, `strategy_runs` 기록 저장/조회까지 확인되었습니다. 다음 작업은 `StrategyRunService` 안에 있는 mock workflow를 별도 실행 workflow service로 분리하는 것입니다.
+현재 코드 기준으로 parse와 LLM 연동 수동 검증, active 전환, scheduler 기반 run 생성, `strategy_runs` 기록 저장/조회, `POST /strategies/:id/run` 수동 실행 API, `StrategyExecutionService` 기반 workflow 분리, 실제 Upbit 캔들 수집, 사용자별 Upbit credential 암호화 저장, Upbit 자산 조회 기반 portfolio step까지 진행되었습니다. 다음 작업은 paper trading 전략과 live trading 전략의 portfolio 조회 흐름을 분리하는 것입니다.
 
-현재 `StrategyRunService.runMockByStrategy()`는 다음 흐름을 갖습니다.
+현재 `StrategyRunService.runByStrategy()`는 다음 흐름을 갖습니다.
 
 1. 사용자 소유 전략을 조회합니다.
 2. 전략이 `active`인지 확인합니다.
 3. `enabled=true`인지 확인합니다.
 4. `structuredStrategy`가 `isStructuredStrategy()`를 통과하는지 확인합니다.
-5. `strategy_runs` row를 `running` 상태로 먼저 저장합니다.
-6. mock workflow를 실행합니다.
-7. 결과가 `isStrategyRunResult()`를 통과하면 run을 `succeeded`로 업데이트합니다.
-8. 실패하면 run을 `failed`로 업데이트하고 `errorMessage`를 저장합니다.
-9. 성공 시 전략의 `nextRunAt`을 다음 실행 예정 시간으로 갱신합니다.
+5. 같은 전략의 `running` 실행 이력이 이미 있는지 확인합니다.
+6. `strategy_runs` row를 `running` 상태로 먼저 저장합니다.
+7. `StrategyExecutionService.execute(strategy)`를 호출합니다.
+8. `StrategyExecutionService`는 `structuredStrategy`를 기반으로 실제 Upbit market data, Upbit portfolio, news, AI decision, risk check, order 단계 결과를 만듭니다.
+9. 결과가 `isStrategyRunResult()`를 통과하면 run을 `succeeded`로 업데이트합니다.
+10. 실패하면 run을 `failed`로 업데이트하고 `errorMessage`를 저장합니다.
+11. 성공 시 전략의 `nextRunAt`을 다음 실행 예정 시간으로 갱신합니다.
+
+현재 `StrategySchedulerService`는 다음 흐름을 갖습니다.
+
+1. 1분마다 `strategyStatus=active`, `enabled=true`, `nextRunAt <= now`인 전략을 조회합니다.
+2. 조회된 전략마다 `StrategyRunService.runByStrategy()`를 호출합니다.
+3. 각 전략 실행은 `try/catch`로 감싸져 있어, 한 전략이 실패해도 다음 전략 실행은 계속됩니다.
 
 바로 이어서 할 작업:
 
-- `StrategyExecutionService` 생성
-- `StrategyRunService.executeMockWorkflow()`를 `StrategyExecutionService.execute()`로 이동
-- `StrategyRunService`는 실행 상태 관리와 DB 저장에 집중하도록 정리
-- `StrategyExecutionService`는 `StrategyRunResult`를 반환하도록 구성
-- mock step을 시장 데이터, 뉴스, AI 판단, 리스크 체크, 주문 판단 단계로 나눔
-- scheduler가 기존처럼 `StrategyRunService.runMockByStrategy()`를 호출했을 때 동일하게 `strategy_runs.result`가 저장되는지 확인
+- `PaperTradingModule` 생성
+- `PaperPortfolioService` 생성
+- `StrategyModule`에 `PaperTradingModule` import
+- `StrategyExecutionService.collectPortfolio(strategy)`를 `strategy.strategyMode` 기준으로 분기
+- `paper` 전략은 `PaperPortfolioService`에서 가상 자산을 조회
+- `live` 전략은 기존처럼 `UpbitAuthService.getDecryptedCredential()`과 `UpbitPrivateService.getAccounts()`로 실제 Upbit 자산 조회
+- paper 전략 실행 시 Upbit credential이 없어도 `portfolio` step이 성공하는지 확인
+- live 전략 실행 시 Upbit credential이 없으면 실패하는지 확인
+- 이후 paper trading DB 테이블 설계로 확장
+
+추천 폴더 구조:
+
+```txt
+src/paper-trading/
+  paper-trading.module.ts
+  services/
+    paper-portfolio.service.ts
+  types/
+    paper-portfolio.type.ts
+```
 
 주의할 점:
 
-- 이 단계는 아직 실제 주문이나 실제 LangGraph 실행이 아니라 mock workflow 구조 정리 단계입니다.
-- scheduler는 이미 붙었지만 중복 실행 방지는 아직 없습니다.
-- 운영 형태로 가기 전에는 DB lock, claim 컬럼, 또는 running run 존재 여부 기반 중복 실행 방지를 반드시 추가해야 합니다.
-- 실제 workflow가 길어지면 step별 저장 테이블이나 `result.steps` 구조를 더 세밀하게 조정할 수 있습니다.
+- 이미 Upbit public candle API와 private account API는 연결되어 있습니다.
+- `paper` 전략이 Upbit credential을 요구하면 안 됩니다.
+- `live` 전략은 아직 주문 실행으로 연결하지 않습니다.
+- `live` 전략은 `user.liveTradingEnabled`, human review, risk check 정책이 붙기 전까지 읽기 중심으로만 유지합니다.
+- `CREDENTIAL_ENCRYPTION_KEY`는 credential 저장/복호화에 필수입니다.
+- 뉴스 수집도 우선 `NewsDataService` skeleton만 만들고, 나중에 검색 API 또는 뉴스 API를 연결합니다.
+- 이후 LangGraph로 전환할 때는 market data, portfolio, news 수집 흐름이 `collect_data` 노드의 내부 구현이 될 가능성이 큽니다.
+
+완료 후 확인할 흐름:
+
+```txt
+POST /strategies
+POST /strategies/:id/parse
+PATCH /strategies/:id/status
+POST /strategies/:id/run
+GET /strategy-runs/:runId
+```
+
+`GET /strategy-runs/:runId`에서 확인할 값:
+
+- `result.steps`에 `market_data` 단계가 있습니다.
+- `market_data.output.candleGroups`가 있습니다.
+- `news` 단계가 있습니다.
+- `portfolio` 단계가 있습니다.
+- paper 전략에서는 paper portfolio가 반환됩니다.
+- live 전략에서는 Upbit 실제 balances가 반환됩니다.
+- `ai_decision`, `risk_check`, `order`는 아직 mock이어도 됩니다.
+
+검증 명령어:
+
+```bash
+pnpm exec tsc --noEmit
+pnpm exec eslint "src/**/*.ts"
+```
+
+그 다음 작업:
+
+- paper trading DB 테이블을 설계합니다.
+- news 수집 서비스를 붙입니다.
+- AI decision 단계는 나중에 LangGraph 또는 별도 decision service로 이동합니다.
 
 ### 16.1 다른 컴퓨터에서 시작 직후 확인
 
@@ -1589,15 +1681,21 @@ PATCH /admin/users/:id/trading-permissions
 - `@nestjs/schedule` 기반 1분 주기 scheduler 1차 구현 완료
 - `strategyStatus=active`, `enabled=true`, `nextRunAt <= now` 조건으로 실행 대상 조회
 - 실행 대상 전략마다 `strategy_runs` 생성 확인 완료
+- 각 전략 실행을 `try/catch`로 감싸 특정 전략 실패가 전체 scheduler 루프를 막지 않도록 1차 실패 격리 완료
+- 같은 전략의 `running` run 존재 여부를 확인하는 1차 중복 실행 방지 추가
 - 남은 작업: `locked_until`, `failure_count` 또는 별도 claim 정책 설계
-- 남은 작업: 중복 실행 방지
+- 남은 작업: 트랜잭션 또는 DB lock 기반의 더 강한 중복 실행 방지
 
 ### Phase 4. Workflow Run
 
 - `strategy_runs` 상태 저장
-- `StrategyRunResult.steps`에 단계별 mock 실행 결과 저장
-- 다음 작업: `StrategyExecutionService`로 workflow 책임 분리
-- 이후 작업: 실제 market data, AI decision, risk check 연결
+- `StrategyRunResult.steps`에 단계별 실행 결과 저장
+- `StrategyExecutionService`로 workflow 책임 분리 완료
+- `POST /strategies/:id/run` 수동 실행 API 추가 완료
+- Upbit public candle API 기반 실제 market data 수집 완료
+- Upbit credential 암호화 저장과 private account API 기반 live portfolio 조회 완료
+- 다음 작업: paper/live portfolio 조회 분기
+- 이후 작업: news data, AI decision, risk check 연결
 - SSE 또는 WebSocket으로 실행 상태 전달
 
 ### Phase 5. Risk Engine
@@ -1612,6 +1710,7 @@ PATCH /admin/users/:id/trading-permissions
 
 ### Phase 6. Paper Trading
 
+- 다음 작업: paper 전략 실행 시 Upbit 실제 자산 대신 paper portfolio를 조회하도록 분기
 - 가상 계좌
 - 가상 포지션
 - 가상 주문

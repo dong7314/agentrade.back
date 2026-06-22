@@ -331,3 +331,87 @@ export function ApiParseStrategy() {
     }),
   );
 }
+
+export function ApiRunStrategy() {
+  return applyDecorators(
+    ApiCookieAuth('access_token'),
+    ApiOperation({
+      summary: '전략 수동 실행',
+      description:
+        '로그인 사용자의 특정 전략을 즉시 실행하고 실행 이력을 생성합니다. 전략은 active 상태이고, 자동 실행이 활성화되어 있으며, structuredStrategy가 유효해야 합니다.',
+    }),
+    ApiParam({
+      name: 'id',
+      example: 1,
+      description: '실행할 전략 ID입니다.',
+    }),
+    ApiOkResponse({
+      description: '전략 수동 실행 성공',
+      schema: {
+        example: {
+          id: 1,
+          strategyId: 1,
+          userId: 1,
+          status: 'succeeded',
+          startedAt: '2026-06-02T01:00:00.000Z',
+          finishedAt: '2026-06-02T01:00:02.000Z',
+          errorMessage: null,
+          result: {
+            decision: 'hold',
+            reason: 'mock execution only',
+            confidence: 0.5,
+            steps: [
+              {
+                name: 'market_data',
+                status: 'skipped',
+                summary:
+                  'mock 실행에서는 KRW-BTC 시장 데이터 조회를 생략했습니다.',
+              },
+              {
+                name: 'news',
+                status: 'skipped',
+                summary: '뉴스 조회는 mock 실행에서 생략했습니다.',
+              },
+              {
+                name: 'ai_decision',
+                status: 'succeeded',
+                summary: 'mock 판단으로 hold를 반환했습니다.',
+                output: {
+                  decision: 'hold',
+                  confidence: 0.5,
+                },
+              },
+              {
+                name: 'risk_check',
+                status: 'skipped',
+                summary: 'balanced mock 실행에서는 리스크 검사를 생략했습니다.',
+              },
+              {
+                name: 'order',
+                status: 'skipped',
+                summary: 'mock 실행에서는 주문을 생성하지 않았습니다.',
+              },
+            ],
+            strategy: {
+              id: 1,
+              market: 'KRW-BTC',
+              intervalMinutes: 60,
+            },
+          },
+          createdAt: '2026-06-02T01:00:00.000Z',
+          updatedAt: '2026-06-02T01:00:02.000Z',
+        },
+      },
+    }),
+    ApiBadRequestResponse({
+      description:
+        '전략이 active 상태가 아니거나, 자동 실행이 비활성화되어 있거나, structuredStrategy가 유효하지 않거나, 이미 실행 중인 전략입니다.',
+    }),
+    ApiUnauthorizedResponse({
+      description: 'access_token 쿠키가 없거나 유효하지 않습니다.',
+    }),
+    ApiNotFoundResponse({
+      description: '전략이 존재하지 않거나 현재 사용자의 전략이 아닙니다.',
+    }),
+  );
+}

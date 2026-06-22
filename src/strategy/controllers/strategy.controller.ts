@@ -18,14 +18,16 @@ import { JwtAuthGuard } from '@/auth/guards/jwt-auth.guard';
 import { CurrentUser } from '@/auth/decorators/current-user.decorator';
 
 import { StrategyService } from '../services/strategy.service';
+import { StrategyRunService } from '../services/strategy-run.service';
 
 import {
+  ApiRunStrategy,
   ApiGetStrategy,
   ApiGetStrategies,
+  ApiParseStrategy,
   ApiCreateStrategy,
   ApiUpdateStrategy,
   ApiUpdateStrategyStatus,
-  ApiParseStrategy,
 } from '../docs/strategy-api.docs';
 
 import { PaginatedResult } from '@/common/types/paginated.type';
@@ -33,13 +35,17 @@ import { CreateStrategyDto } from '../dto/create-strategy.dto';
 import { UpdateStrategyDto } from '../dto/update-strategy.dto';
 import { StrategyResponseDto } from '../dto/strategy-response.dto';
 import { FindStrategiesQueryDto } from '../dto/find-strategy.query.dto';
+import { StrategyRunResponseDto } from '../dto/strategy-run-response.dto';
 import { UpdateStrategyStatusDto } from '../dto/update-strategy-status.dto';
 import type { AuthenticatedUser } from '@/auth/types/authenticated-user.type';
 
 @ApiTags('Strategies')
 @Controller('strategies')
 export class StrategyController {
-  constructor(private readonly strategyService: StrategyService) {}
+  constructor(
+    private readonly strategyService: StrategyService,
+    private readonly strategyRunService: StrategyRunService,
+  ) {}
 
   @Get()
   @UseGuards(JwtAuthGuard)
@@ -134,5 +140,21 @@ export class StrategyController {
     });
 
     return StrategyResponseDto.fromEntity(strategy);
+  }
+
+  @Post(':id/run')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(JwtAuthGuard)
+  @ApiRunStrategy()
+  async runStrategy(
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<StrategyRunResponseDto> {
+    const strategyRun = await this.strategyRunService.runByStrategy({
+      userId: user.id,
+      strategyId: id,
+    });
+
+    return StrategyRunResponseDto.fromEntity(strategyRun);
   }
 }
