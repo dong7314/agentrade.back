@@ -3,8 +3,8 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 
 import { LlmModule } from '@/llm/llm.module';
 import { UserModule } from '@/user/user.module';
-import { NewsModule } from '@/news/news.module';
 import { UpbitModule } from '@/upbit/upbit.module';
+import { DataCollectModule } from '@/data-collect/data-collect.module';
 import { PaperTradingModule } from '@/paper-trading/paper-trading.module';
 
 import { StrategyService } from './services/strategy.service';
@@ -24,8 +24,8 @@ import { StrategyRunEntity } from './entities/strategy-run.entity';
     TypeOrmModule.forFeature([StrategyEntity, StrategyRunEntity]),
     UserModule,
     LlmModule,
-    NewsModule,
     UpbitModule,
+    DataCollectModule,
     PaperTradingModule,
   ],
   controllers: [StrategyController, StrategyRunController],

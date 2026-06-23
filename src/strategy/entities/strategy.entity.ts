@@ -15,6 +15,7 @@ import { UserEntity } from '@/user/entities/user.entity';
 import { Exchange } from '../enums/exchange.enum';
 import { StrategyMode } from '../enums/strategy-mode.enum';
 import { StrategyStatus } from '../enums/strategy-status.enum';
+import { StructuredStrategy } from '../types/structured-strategy.type';
 import { StrategyJudgmentMode } from '../enums/strategy-judgment-mode.enum';
 
 @Index('IDX_strategies_user_id', ['userId'])
@@ -88,7 +89,7 @@ export class StrategyEntity {
   strategyStatus!: StrategyStatus;
 
   @Column({ name: 'structured_strategy', type: 'jsonb', nullable: true })
-  structuredStrategy!: Record<string, unknown> | null;
+  structuredStrategy!: StructuredStrategy | null;
 
   @Column({ name: 'allow_market_data', type: 'boolean', default: true })
   allowMarketData!: boolean;

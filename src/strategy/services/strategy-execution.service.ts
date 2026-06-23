@@ -2,13 +2,14 @@ import { BadRequestException, Injectable } from '@nestjs/common';
 
 import { StrategyEntity } from '../entities/strategy.entity';
 
-import { NewsDataService } from '@/news/services/news-data.service';
+import { NewsDataService } from '@/data-collect/services/news-data.service';
 import { UpbitAuthService } from '@/upbit/services/upbit.auth.service';
 import { UpbitPublicService } from '@/upbit/services/upbit.public.service';
 import { UpbitPrivateService } from '@/upbit/services/upbit.private.service';
+import { AssetSummaryService } from '@/data-collect/services/asset-summary.service';
 import { PaperPortfolioService } from '@/paper-trading/services/paper-portfolio.service';
 
-import { createNewsQuery } from '@/news/utils/create-query';
+import { createNewsQuery } from '@/data-collect/utils/create-query';
 import { toUpbitMinuteUnit } from '@/upbit/types/candle/upbit-minute-unit.type';
 import { isStructuredStrategy } from '../validators/structured-strategy.validator';
 
@@ -26,6 +27,7 @@ export class StrategyExecutionService {
     private readonly upbitAuthService: UpbitAuthService,
     private readonly upbitPublicService: UpbitPublicService,
     private readonly upbitPrivateService: UpbitPrivateService,
+    private readonly assetSummaryService: AssetSummaryService,
     private readonly paperPortfolioService: PaperPortfolioService,
   ) {}
 
@@ -41,6 +43,7 @@ export class StrategyExecutionService {
     const marketDataStep = await this.collectMarketData(structuredStrategy);
     const portfolioStep = await this.collectPortfolio(strategy);
     const newsStep = await this.collectNews(structuredStrategy);
+    const assetSummaryStep = await this.collectAssetSummary(strategy);
     const aiDecisionStep = this.makeAiDecision(structuredStrategy);
     const riskCheckStep = this.checkRisk(structuredStrategy);
     const orderStep = this.decideOrder(structuredStrategy);
@@ -53,6 +56,7 @@ export class StrategyExecutionService {
         marketDataStep,
         portfolioStep,
         newsStep,
+        assetSummaryStep,
         aiDecisionStep,
         riskCheckStep,
         orderStep,
@@ -184,6 +188,23 @@ export class StrategyExecutionService {
         fetchedAt: new Date(),
         articles,
       },
+    };
+  }
+
+  // 마켓 요약 정보 크롤링 수집
+  private async collectAssetSummary(
+    strategy: StrategyEntity,
+  ): Promise<StrategyRunStepResult> {
+    const assetSummaryData = await this.assetSummaryService.getSummaryByMarket(
+      strategy.market,
+    );
+    const label = assetSummaryData.asset.koreanName ?? assetSummaryData.symbol;
+
+    return {
+      name: 'asset_summary',
+      status: 'succeeded',
+      summary: `${label} 관련 시장 정보 요약 데이터를 수집하였습니다.`,
+      output: assetSummaryData,
     };
   }
 

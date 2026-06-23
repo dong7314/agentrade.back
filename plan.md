@@ -4,7 +4,7 @@
 
 이 문서는 `backend` 폴더에서 현재까지 어디까지 개발했는지, 이번 세션에서 어떤 방식으로 학습/개발을 진행했는지, 다른 컴퓨터에서 이어서 작업할 때 무엇부터 확인하면 되는지 정리한 인수인계 문서입니다.
 
-현재 백엔드는 NestJS + TypeORM + PostgreSQL + Scalar 기반으로 로컬 회원가입/로그인, 쿠키 기반 access/refresh token, DB 세션, Naver/Kakao OAuth 로그인, 전략 생성/목록/상세/수정/상태 변경/LLM 구조화 흐름까지 1차 구현된 상태입니다. 또한 `strategy_runs` 기반 실행 이력 저장/조회, `POST /strategies/:id/run` 수동 실행 API, `@nestjs/schedule` 기반 자동 실행 흐름, 실제 Upbit 캔들 수집, 사용자별 Upbit credential 암호화 저장, live portfolio 조회, paper portfolio 조회 분기, Naver 뉴스 수집, 전략별 데이터 접근 권한, 전략 판단 모드 설정까지 진행된 상태입니다.
+현재 백엔드는 NestJS + TypeORM + PostgreSQL + Scalar 기반으로 로컬 회원가입/로그인, 쿠키 기반 access/refresh token, DB 세션, Naver/Kakao OAuth 로그인, 전략 생성/목록/상세/수정/상태 변경/LLM 구조화 흐름까지 1차 구현된 상태입니다. 또한 `strategy_runs` 기반 실행 이력 저장/조회, `POST /strategies/:id/run` 수동 실행 API, `@nestjs/schedule` 기반 자동 실행 흐름, 실제 Upbit 캔들 수집, 사용자별 Upbit credential 암호화 저장, live portfolio 조회, paper portfolio 조회 분기, Naver 뉴스 수집, Upbit DataLab 자산 요약 수집, 전략별 데이터 접근 권한, 전략 판단 모드 설정까지 진행된 상태입니다.
 
 2026-06-23 현재 중요한 진행 상태:
 
@@ -20,10 +20,15 @@
 - `paper` 전략은 `PaperPortfolioService`의 paper portfolio를 조회합니다.
 - `live` 전략은 기존처럼 Upbit credential 복호화 후 Upbit `/v1/accounts`를 조회합니다.
 - paper 전략 실행 시 Upbit credential 없이도 portfolio step이 성공하는 방향으로 정리했습니다.
-- `src/news` 모듈을 추가했고 `NewsDataService`가 Naver News Search API를 호출합니다.
+- `src/news` 모듈을 `src/data-collect` 모듈로 확장/이동했습니다.
+- `DataCollectModule`은 현재 뉴스 수집과 Upbit DataLab 자산 요약 수집 책임을 가집니다.
+- `NewsDataService`가 Naver News Search API를 호출합니다.
 - `createNewsQuery()`를 추가해 `KRW-BTC` 같은 market 값을 뉴스 검색어로 변환합니다.
 - `StrategyExecutionService.collectNews()`를 async로 변경했고, `allowNewsSearch=true`일 때 뉴스를 수집합니다.
 - `allowNewsSearch=false`인 전략은 외부 뉴스 API를 호출하지 않고 `news` step을 `skipped`로 저장합니다.
+- `AssetSummaryService`를 추가해 `https://datalab.upbit.com/assets/{SYMBOL}/summary` 페이지의 Next.js dehydrated data를 읽고 자산 요약 데이터로 변환합니다.
+- `StrategyExecutionService`에 `asset_summary` step을 추가해 AI decision 전에 자산 요약 데이터를 항상 수집합니다.
+- `KRW-BTC`, `KRW-XRP` 기준으로 자산 요약 파싱이 동작하는 것을 수동 확인했습니다.
 - `StrategyEntity`에 `allowMarketData`, `allowNewsSearch`, `strategyJudgmentMode`를 추가했습니다.
 - `CreateStrategyDto`, `UpdateStrategyDto`, `StrategyResponseDto`, Scalar docs에 위 설정값을 반영했습니다.
 - `StructuredStrategy`에서 사용하지 않는 `allowOnchainData`를 제거했습니다.
@@ -34,7 +39,7 @@
 
 ```bash
 pnpm exec tsc --noEmit
-pnpm exec eslint "src/strategy/**/*.ts" "src/database/migrations/1782240000000-AddStrategyDataPermissions.ts"
+pnpm exec eslint "src/data-collect/**/*.ts" "src/strategy/services/strategy-execution.service.ts" "src/strategy/types/strategy-run-result.type.ts" "src/strategy/strategy.module.ts"
 ```
 
 다음 작업 방향:
@@ -1349,7 +1354,7 @@ psql -d agentrade -c "select id, user_id, name, market, strategy_mode, strategy_
 
 ## 16. 바로 다음 작업 추천
 
-현재 코드 기준으로 parse와 LLM 연동 수동 검증, active 전환, scheduler 기반 run 생성, `strategy_runs` 기록 저장/조회, `POST /strategies/:id/run` 수동 실행 API, `StrategyExecutionService` 기반 workflow 분리, 실제 Upbit 캔들 수집, 사용자별 Upbit credential 암호화 저장, live portfolio 조회, paper portfolio 조회 분기, Naver 뉴스 수집, 전략별 데이터 접근 권한, 전략 판단 모드 저장까지 진행되었습니다. 다음 작업은 migration 적용 후 `AI decision`, `risk check`, `paper order`를 실제 구조로 바꾸는 것입니다.
+현재 코드 기준으로 parse와 LLM 연동 수동 검증, active 전환, scheduler 기반 run 생성, `strategy_runs` 기록 저장/조회, `POST /strategies/:id/run` 수동 실행 API, `StrategyExecutionService` 기반 workflow 분리, 실제 Upbit 캔들 수집, 사용자별 Upbit credential 암호화 저장, live portfolio 조회, paper portfolio 조회 분기, Naver 뉴스 수집, Upbit DataLab 자산 요약 수집, 전략별 데이터 접근 권한, 전략 판단 모드 저장까지 진행되었습니다. 다음 작업은 migration 적용 후 `AI decision`, `risk check`, `paper order`를 실제 구조로 바꾸는 것입니다.
 
 현재 `StrategyRunService.runByStrategy()`는 다음 흐름을 갖습니다.
 
@@ -1360,7 +1365,7 @@ psql -d agentrade -c "select id, user_id, name, market, strategy_mode, strategy_
 5. 같은 전략의 `running` 실행 이력이 이미 있는지 확인합니다.
 6. `strategy_runs` row를 `running` 상태로 먼저 저장합니다.
 7. `StrategyExecutionService.execute(strategy)`를 호출합니다.
-8. `StrategyExecutionService`는 `structuredStrategy`를 기반으로 market data, portfolio, news, AI decision, risk check, order 단계 결과를 만듭니다.
+8. `StrategyExecutionService`는 `structuredStrategy`를 기반으로 market data, portfolio, news, asset summary, AI decision, risk check, order 단계 결과를 만듭니다.
 9. 결과가 `isStrategyRunResult()`를 통과하면 run을 `succeeded`로 업데이트합니다.
 10. 실패하면 run을 `failed`로 업데이트하고 `errorMessage`를 저장합니다.
 11. 성공 시 전략의 `nextRunAt`을 다음 실행 예정 시간으로 갱신합니다.
@@ -1376,20 +1381,27 @@ psql -d agentrade -c "select id, user_id, name, market, strategy_mode, strategy_
 - `pnpm migration:run`으로 `allow_market_data`, `allow_news_search`, `strategy_judgment_mode` 컬럼을 DB에 적용합니다.
 - Scalar에서 전략 생성/수정 API의 `strategyJudgmentMode`, `allowMarketData`, `allowNewsSearch` 요청/응답을 확인합니다.
 - `POST /strategies/:id/parse` 후 `structuredStrategy.dataPermissions`와 `structuredStrategy.judgment`가 서버 설정값으로 저장되는지 확인합니다.
-- `POST /strategies/:id/run` 후 `GET /strategy-runs/:runId`에서 `market_data`, `portfolio`, `news` step output이 저장되는지 확인합니다.
+- `POST /strategies/:id/run` 후 `GET /strategy-runs/:runId`에서 `market_data`, `portfolio`, `news`, `asset_summary` step output이 저장되는지 확인합니다.
+- `asset_summary` 수집 실패 시 run 전체를 실패시킬지, `asset_summary` step만 `failed`로 저장하고 AI decision을 중단할지 정책을 정리합니다.
+- 정한 정책에 맞춰 `StrategyExecutionService.collectAssetSummary()`에 `try/catch`와 실패 step 저장 흐름을 추가합니다.
 - 그 다음 `AI decision` 단계를 별도 service로 분리합니다.
 - 이후 `risk check`를 실제 정책 기반으로 구현합니다.
 - 그 다음 `paper order / paper fill` 테이블과 가상 체결 로직을 설계합니다.
 
-현재 news 폴더 구조:
+현재 data-collect 폴더 구조:
 
 ```txt
-src/news/
-  news.module.ts
+src/data-collect/
+  data-collect.module.ts
   services/
     news-data.service.ts
+    asset-summary.service.ts
   types/
+    asset-summary.type.ts
+    naver-news-search.response.type.ts
     news-article.type.ts
+  utils/
+    create-query.ts
 ```
 
 주의할 점:
@@ -1401,9 +1413,11 @@ src/news/
 - `CREDENTIAL_ENCRYPTION_KEY`는 credential 저장/복호화에 필수입니다.
 - 뉴스 수집은 `NewsDataService`에서 Naver News Search API를 사용합니다.
 - `allowNewsSearch=false`인 전략에서는 외부 뉴스 검색을 호출하면 안 됩니다.
+- `asset_summary` step은 현재 전략의 `market`을 기준으로 Upbit DataLab 자산 요약 페이지를 수집합니다.
+- Upbit DataLab 페이지 구조는 외부 웹 페이지에 의존하므로, 이후 파싱 실패 시 step 실패 처리 또는 fallback 정책을 정리해야 합니다.
 - `strategyJudgmentMode`는 AI가 정하는 값이 아니라 사용자가 정하는 실행 정책입니다.
 - `structuredStrategy.judgment`는 UI 표시와 실행 시점 스냅샷 용도로 저장합니다.
-- 이후 LangGraph로 전환할 때는 market data, portfolio, news 수집 흐름이 `collect_data` 노드의 내부 구현이 될 가능성이 큽니다.
+- 이후 LangGraph로 전환할 때는 market data, portfolio, news, asset summary 수집 흐름이 `collect_data` 노드의 내부 구현이 될 가능성이 큽니다.
 
 완료 후 확인할 흐름:
 
@@ -1420,11 +1434,13 @@ GET /strategy-runs/:runId
 - `result.steps`에 `market_data` 단계가 있습니다.
 - `market_data.output.candleGroups`가 있습니다.
 - `news` 단계가 있습니다.
+- `asset_summary` 단계가 있습니다.
 - `portfolio` 단계가 있습니다.
 - paper 전략에서는 paper portfolio가 반환됩니다.
 - live 전략에서는 Upbit 실제 balances가 반환됩니다.
 - `allowNewsSearch=true`인 전략에서는 `news.output.articles`가 반환됩니다.
 - `allowNewsSearch=false`인 전략에서는 `news.status=skipped`가 반환됩니다.
+- `asset_summary.output.fearGreed`, `asset_summary.output.technicalAnalysis`, `asset_summary.output.price`가 반환됩니다.
 - `ai_decision`, `risk_check`, `order`는 아직 mock이어도 됩니다.
 
 검증 명령어:
@@ -1755,8 +1771,10 @@ PATCH /admin/users/:id/trading-permissions
 - Upbit credential 암호화 저장과 private account API 기반 live portfolio 조회 완료
 - paper/live portfolio 조회 분기 완료
 - Naver News Search API 기반 news data 수집 완료
+- Upbit DataLab asset summary 기반 공포/탐욕, 기술적 분석, 가격/거래대금 요약 수집 완료
 - 전략별 `allowMarketData`, `allowNewsSearch`, `strategyJudgmentMode` 설정 추가
-- 다음 작업: AI decision, risk check 연결
+- 다음 작업: `asset_summary` 실패 정책 정리와 실패 step 처리
+- 이후 작업: AI decision, risk check 연결
 - 이후 작업: `strategyJudgmentMode` 기준 승인 대기 또는 paper order 진행 흐름 연결
 - SSE 또는 WebSocket으로 실행 상태 전달
 

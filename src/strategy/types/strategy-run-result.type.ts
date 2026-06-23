@@ -5,7 +5,7 @@ export type StrategyRunStepResult = {
     | 'market_data'
     | 'portfolio'
     | 'news'
-    | 'indicator_analysis'
+    | 'asset_summary'
     | 'ai_decision'
     | 'risk_check'
     | 'approval'
