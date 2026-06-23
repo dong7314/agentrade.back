@@ -1,9 +1,11 @@
 import { ApiProperty } from '@nestjs/swagger';
 
+import { StrategyEntity } from '../entities/strategy.entity';
+
 import { Exchange } from '../enums/exchange.enum';
 import { StrategyMode } from '../enums/strategy-mode.enum';
 import { StrategyStatus } from '../enums/strategy-status.enum';
-import { StrategyEntity } from '../entities/strategy.entity';
+import { StrategyJudgmentMode } from '../enums/strategy-judgment-mode.enum';
 
 export class StrategyResponseDto {
   @ApiProperty({ example: 1 })
@@ -30,6 +32,12 @@ export class StrategyResponseDto {
   @ApiProperty({ enum: StrategyMode, example: StrategyMode.PAPER })
   strategyMode!: StrategyMode;
 
+  @ApiProperty({
+    enum: StrategyJudgmentMode,
+    example: StrategyJudgmentMode.USER,
+  })
+  strategyJudgmentMode!: StrategyJudgmentMode;
+
   @ApiProperty({ example: 60 })
   intervalMinutes!: number;
 
@@ -48,6 +56,12 @@ export class StrategyResponseDto {
   @ApiProperty({ example: null, nullable: true })
   structuredStrategy!: Record<string, unknown> | null;
 
+  @ApiProperty({ example: true })
+  allowMarketData!: boolean;
+
+  @ApiProperty({ example: false })
+  allowNewsSearch!: boolean;
+
   @ApiProperty({ example: '2026-06-02T01:00:00.000Z' })
   createdAt!: Date;
 
@@ -63,12 +77,15 @@ export class StrategyResponseDto {
       market: strategy.market,
       prompt: strategy.prompt,
       strategyMode: strategy.strategyMode,
+      strategyJudgmentMode: strategy.strategyJudgmentMode,
       intervalMinutes: strategy.intervalMinutes,
       scheduleAnchorAt: strategy.scheduleAnchorAt,
       nextRunAt: strategy.nextRunAt,
       enabled: strategy.enabled,
       strategyStatus: strategy.strategyStatus,
       structuredStrategy: strategy.structuredStrategy,
+      allowMarketData: strategy.allowMarketData,
+      allowNewsSearch: strategy.allowNewsSearch,
       createdAt: strategy.createdAt,
       updatedAt: strategy.updatedAt,
     };

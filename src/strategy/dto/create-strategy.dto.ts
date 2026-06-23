@@ -1,13 +1,19 @@
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
   IsIn,
   IsInt,
+  IsEnum,
   Matches,
   IsString,
   MaxLength,
+  IsBoolean,
+  IsOptional,
   IsNotEmpty,
   IsDateString,
 } from 'class-validator';
+
+import { StrategyMode } from '../enums/strategy-mode.enum';
+import { StrategyJudgmentMode } from '../enums/strategy-judgment-mode.enum';
 
 export class CreateStrategyDto {
   @IsString()
@@ -47,6 +53,40 @@ export class CreateStrategyDto {
     description: '전략을 주기적으로 실행하는 반복 주기',
   })
   intervalMinutes!: number;
+
+  @IsEnum(StrategyMode)
+  @IsOptional()
+  @ApiPropertyOptional({
+    enum: StrategyMode,
+    example: StrategyMode.PAPER,
+    description: '전략 실행 모드입니다. 생략하면 paper로 생성됩니다.',
+  })
+  strategyMode?: StrategyMode;
+
+  @IsEnum(StrategyJudgmentMode)
+  @IsOptional()
+  @ApiPropertyOptional({
+    enum: StrategyJudgmentMode,
+    example: StrategyJudgmentMode.USER,
+    description: '전략 실행 판단 설정입니다. 생략하면 user로 설정됩니다.',
+  })
+  strategyJudgmentMode?: StrategyJudgmentMode;
+
+  @IsBoolean()
+  @IsOptional()
+  @ApiPropertyOptional({
+    example: true,
+    description: '마켓 데이터 조회 허용 여부입니다. 생략하면 true입니다.',
+  })
+  allowMarketData?: boolean;
+
+  @IsBoolean()
+  @IsOptional()
+  @ApiPropertyOptional({
+    example: false,
+    description: '뉴스 검색 허용 여부입니다. 생략하면 false입니다.',
+  })
+  allowNewsSearch?: boolean;
 
   @IsDateString()
   @ApiProperty({

@@ -12,9 +12,11 @@ import { StrategyParseService } from './strategy-parse.service';
 import { calculateNextRunAt } from '../utils/calculate-next-run-at';
 import { isStructuredStrategy } from '../validators/structured-strategy.validator';
 
+import { StrategyMode } from '../enums/strategy-mode.enum';
 import { StrategyStatus } from '../enums/strategy-status.enum';
 import { StrategyEntity } from '../entities/strategy.entity';
 import { PaginatedResult } from '@/common/types/paginated.type';
+import { StrategyJudgmentMode } from '../enums/strategy-judgment-mode.enum';
 import { createPaginationMeta } from '@/common/utils/create-pagination-meta';
 import { FindStrategiesQueryDto } from '../dto/find-strategy.query.dto';
 
@@ -77,8 +79,12 @@ export class StrategyService {
     name: string;
     market: string;
     prompt: string;
+    strategyMode?: StrategyMode;
     intervalMinutes: number;
     scheduleAnchorAt: string;
+    allowMarketData?: boolean;
+    allowNewsSearch?: boolean;
+    strategyJudgmentMode?: StrategyJudgmentMode;
   }): Promise<StrategyEntity> {
     const user = await this.userService.findById(input.userId);
 
@@ -86,13 +92,25 @@ export class StrategyService {
       throw new NotFoundException('사용자를 찾을 수 없습니다.');
     }
 
+    const strategyMode = input.strategyMode ?? StrategyMode.PAPER;
+    const strategyJudgmentMode =
+      input.strategyJudgmentMode ?? StrategyJudgmentMode.USER;
+
+    if (strategyMode === StrategyMode.LIVE && !user.liveTradingEnabled) {
+      throw new BadRequestException('실거래 권한이 없는 사용자입니다.');
+    }
+
     const strategy = this.strategyRepository.create({
       user,
       name: input.name,
       market: input.market,
       prompt: input.prompt,
+      strategyMode,
       intervalMinutes: input.intervalMinutes,
       scheduleAnchorAt: new Date(input.scheduleAnchorAt),
+      allowMarketData: input.allowMarketData ?? true,
+      allowNewsSearch: input.allowNewsSearch ?? false,
+      strategyJudgmentMode,
     });
 
     return this.strategyRepository.save(strategy);
@@ -105,10 +123,19 @@ export class StrategyService {
     name?: string;
     market?: string;
     prompt?: string;
+    strategyMode?: StrategyMode;
     intervalMinutes?: number;
     scheduleAnchorAt?: string;
+    allowMarketData?: boolean;
+    allowNewsSearch?: boolean;
+    strategyJudgmentMode?: StrategyJudgmentMode;
   }): Promise<StrategyEntity> {
+    const user = await this.userService.findById(input.userId);
     const strategy = await this.findOneByUser(input.strategyId, input.userId);
+
+    if (!user) {
+      throw new NotFoundException('사용자를 찾을 수 없습니다.');
+    }
 
     if (strategy.strategyStatus === StrategyStatus.ARCHIVED) {
       throw new BadRequestException('보관된 전략은 수정할 수 없습니다.');
@@ -120,26 +147,29 @@ export class StrategyService {
       );
     }
 
+    if (input.strategyMode === StrategyMode.LIVE && !user.liveTradingEnabled) {
+      throw new BadRequestException('실거래 권한이 없는 사용자입니다.');
+    }
+
     strategy.name = input.name ?? strategy.name;
     strategy.market = input.market ?? strategy.market;
     strategy.prompt = input.prompt ?? strategy.prompt;
+    strategy.strategyMode = input.strategyMode ?? strategy.strategyMode;
     strategy.intervalMinutes =
       input.intervalMinutes ?? strategy.intervalMinutes;
     strategy.scheduleAnchorAt = input.scheduleAnchorAt
       ? new Date(input.scheduleAnchorAt)
       : strategy.scheduleAnchorAt;
+    strategy.allowMarketData =
+      input.allowMarketData ?? strategy.allowMarketData;
+    strategy.allowNewsSearch =
+      input.allowNewsSearch ?? strategy.allowNewsSearch;
+    strategy.strategyJudgmentMode =
+      input.strategyJudgmentMode ?? strategy.strategyJudgmentMode;
 
-    const shouldInvalidateParsedStrategy =
-      input.name !== undefined ||
-      input.market !== undefined ||
-      input.prompt !== undefined ||
-      input.intervalMinutes !== undefined ||
-      input.scheduleAnchorAt !== undefined;
-
-    if (shouldInvalidateParsedStrategy) {
-      strategy.structuredStrategy = null;
-      strategy.nextRunAt = null;
-    }
+    // strategy 내용 업데이트 시 parse 초기화
+    strategy.structuredStrategy = null;
+    strategy.nextRunAt = null;
 
     return this.strategyRepository.save(strategy);
   }

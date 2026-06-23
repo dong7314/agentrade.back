@@ -83,9 +83,12 @@ export function isStructuredStrategy(
 
   if (
     typeof value.dataPermissions.allowNewsSearch !== 'boolean' ||
-    typeof value.dataPermissions.allowMarketData !== 'boolean' ||
-    typeof value.dataPermissions.allowOnchainData !== 'boolean'
+    typeof value.dataPermissions.allowMarketData !== 'boolean'
   ) {
+    return false;
+  }
+
+  if (value.judgment !== 'ai' && value.judgment !== 'user') {
     return false;
   }
 

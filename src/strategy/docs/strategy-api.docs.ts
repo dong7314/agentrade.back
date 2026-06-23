@@ -11,8 +11,10 @@ import {
   ApiUnauthorizedResponse,
 } from '@nestjs/swagger';
 
+import { CreateStrategyDto } from '../dto/create-strategy.dto';
 import { UpdateStrategyDto } from '../dto/update-strategy.dto';
 import { UpdateStrategyStatusDto } from '../dto/update-strategy-status.dto';
+import { StrategyJudgmentMode } from '../enums/strategy-judgment-mode.enum';
 
 const strategyExample = {
   id: 1,
@@ -23,12 +25,15 @@ const strategyExample = {
   prompt:
     '비트코인이 20일 이동평균선 위에 있고 RSI가 30 이하일 때만 소액 매수하고 싶어요.',
   strategyMode: 'paper',
+  strategyJudgmentMode: 'user',
   intervalMinutes: 60,
   scheduleAnchorAt: '2026-06-02T01:00:00.000Z',
   nextRunAt: null,
   enabled: false,
   strategyStatus: 'draft',
   structuredStrategy: null,
+  allowMarketData: true,
+  allowNewsSearch: false,
   createdAt: '2026-06-02T01:00:00.000Z',
   updatedAt: '2026-06-02T01:00:00.000Z',
 };
@@ -137,7 +142,12 @@ export function ApiCreateStrategy() {
     ApiOperation({
       summary: '전략 생성',
       description:
-        '로그인 사용자의 자연어 투자 전략 초안을 생성합니다. 생성된 전략은 기본적으로 가상 거래 모드, 비활성화 상태, 초안 상태로 저장됩니다.',
+        '로그인 사용자의 자연어 투자 전략 초안을 생성합니다. 생성된 전략은 기본적으로 가상 거래 모드, 사용자 승인 판단 모드, 마켓 데이터 조회 허용, 뉴스 검색 비허용, 비활성화 상태, 초안 상태로 저장됩니다.',
+    }),
+    ApiBody({
+      type: CreateStrategyDto,
+      description:
+        '생성할 전략 정보입니다. strategyMode, strategyJudgmentMode, allowMarketData, allowNewsSearch는 선택값입니다.',
     }),
     ApiOkResponse({
       description: '전략 생성 성공',
@@ -178,6 +188,7 @@ export function ApiUpdateStrategy() {
         example: {
           ...strategyExample,
           name: '수정된 15분 단기 모멘텀 전략',
+          strategyJudgmentMode: StrategyJudgmentMode.AI,
           prompt:
             '비트코인이 단기 이동평균선 위에 있고 거래량이 증가할 때만 가상 매수하고 싶어요.',
           intervalMinutes: 15,
@@ -260,11 +271,11 @@ export function ApiUpdateStrategyStatus() {
             dataPermissions: {
               allowNewsSearch: true,
               allowMarketData: true,
-              allowOnchainData: false,
             },
+            judgment: 'ai',
             marketDataConfig: {
               symbol: 'KRW-BTC',
-              timeframes: ['15m', '1h', '4h', '1d'],
+              timeframes: ['15m', '30m', '1h'],
               primaryTimeframe: '1h',
             },
             riskPreferences: {
@@ -363,14 +374,58 @@ export function ApiRunStrategy() {
             steps: [
               {
                 name: 'market_data',
-                status: 'skipped',
+                status: 'succeeded',
                 summary:
-                  'mock 실행에서는 KRW-BTC 시장 데이터 조회를 생략했습니다.',
+                  'KRW-BTC 캔들 데이터를 3개 timeframe에서 조회했습니다.',
+                output: {
+                  market: 'KRW-BTC',
+                  primaryTimeframe: '1h',
+                  candleGroups: [
+                    {
+                      timeframe: '15m',
+                      candleCount: 50,
+                      latestClose: 100000000,
+                    },
+                    {
+                      timeframe: '30m',
+                      candleCount: 50,
+                      latestClose: 100100000,
+                    },
+                    {
+                      timeframe: '1h',
+                      candleCount: 50,
+                      latestClose: 100200000,
+                    },
+                  ],
+                },
+              },
+              {
+                name: 'portfolio',
+                status: 'succeeded',
+                summary: 'paper trading 가상 포트폴리오를 조회했습니다.',
+                output: {
+                  cashBalance: 10000000,
+                  totalAssetValue: 10000000,
+                  positions: [],
+                },
               },
               {
                 name: 'news',
-                status: 'skipped',
-                summary: '뉴스 조회는 mock 실행에서 생략했습니다.',
+                status: 'succeeded',
+                summary: '비트코인 관련 뉴스 5개를 조회했습니다.',
+                output: {
+                  enabled: true,
+                  query: '비트코인',
+                  articles: [
+                    {
+                      title: '비트코인 관련 뉴스 제목',
+                      link: 'https://example.com/news',
+                      source: 'naver',
+                      publishedAt: '2026-06-02T01:00:00.000Z',
+                      description: '뉴스 요약입니다.',
+                    },
+                  ],
+                },
               },
               {
                 name: 'ai_decision',

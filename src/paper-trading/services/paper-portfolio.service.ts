@@ -27,7 +27,7 @@ export class PaperPortfolioService {
     });
 
     if (!account) {
-      throw new NotFoundException('현재 가장 계좌가 존재하지 않습니다.');
+      throw new NotFoundException('현재 가상 계좌가 존재하지 않습니다.');
     }
 
     // 가상 계좌 포지션 조회

@@ -2,11 +2,13 @@ import { BadRequestException, Injectable } from '@nestjs/common';
 
 import { StrategyEntity } from '../entities/strategy.entity';
 
+import { NewsDataService } from '@/news/services/news-data.service';
 import { UpbitAuthService } from '@/upbit/services/upbit.auth.service';
 import { UpbitPublicService } from '@/upbit/services/upbit.public.service';
 import { UpbitPrivateService } from '@/upbit/services/upbit.private.service';
 import { PaperPortfolioService } from '@/paper-trading/services/paper-portfolio.service';
 
+import { createNewsQuery } from '@/news/utils/create-query';
 import { toUpbitMinuteUnit } from '@/upbit/types/candle/upbit-minute-unit.type';
 import { isStructuredStrategy } from '../validators/structured-strategy.validator';
 
@@ -14,12 +16,13 @@ import {
   StrategyRunResult,
   StrategyRunStepResult,
 } from '../types/strategy-run-result.type';
-import { StructuredStrategy } from '../types/structured-strategy.type';
 import { StrategyMode } from '../enums/strategy-mode.enum';
+import { StructuredStrategy } from '../types/structured-strategy.type';
 
 @Injectable()
 export class StrategyExecutionService {
   constructor(
+    private readonly newsDataService: NewsDataService,
     private readonly upbitAuthService: UpbitAuthService,
     private readonly upbitPublicService: UpbitPublicService,
     private readonly upbitPrivateService: UpbitPrivateService,
@@ -37,7 +40,7 @@ export class StrategyExecutionService {
 
     const marketDataStep = await this.collectMarketData(structuredStrategy);
     const portfolioStep = await this.collectPortfolio(strategy);
-    const newsStep = this.collectNews(structuredStrategy);
+    const newsStep = await this.collectNews(structuredStrategy);
     const aiDecisionStep = this.makeAiDecision(structuredStrategy);
     const riskCheckStep = this.checkRisk(structuredStrategy);
     const orderStep = this.decideOrder(structuredStrategy);
@@ -150,15 +153,37 @@ export class StrategyExecutionService {
   }
 
   // 뉴스 데이터 수집
-  private collectNews(
+  private async collectNews(
     structuredStrategy: StructuredStrategy,
-  ): StrategyRunStepResult {
+  ): Promise<StrategyRunStepResult> {
+    if (!structuredStrategy.dataPermissions.allowNewsSearch) {
+      return {
+        name: 'news',
+        status: 'skipped',
+        summary: '전략 설정에서 뉴스 검색을 허용하지 않아 생략했습니다.',
+        output: {
+          enabled: false,
+          articles: [],
+        },
+      };
+    }
+
+    const query = createNewsQuery(structuredStrategy);
+    const articles = await this.newsDataService.search({
+      query,
+      display: 5,
+    });
+
     return {
       name: 'news',
-      status: structuredStrategy.dataPermissions.allowNewsSearch
-        ? 'succeeded'
-        : 'skipped',
-      summary: `뉴스 조회는 mock 실행에서 생략했습니다.`,
+      status: 'succeeded',
+      summary: `${query} 관련 뉴스 ${articles.length}개를 조회했습니다.`,
+      output: {
+        enabled: true,
+        query,
+        fetchedAt: new Date(),
+        articles,
+      },
     };
   }
 

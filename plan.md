@@ -4,7 +4,7 @@
 
 이 문서는 `backend` 폴더에서 현재까지 어디까지 개발했는지, 이번 세션에서 어떤 방식으로 학습/개발을 진행했는지, 다른 컴퓨터에서 이어서 작업할 때 무엇부터 확인하면 되는지 정리한 인수인계 문서입니다.
 
-현재 백엔드는 NestJS + TypeORM + PostgreSQL + Scalar 기반으로 로컬 회원가입/로그인, 쿠키 기반 access/refresh token, DB 세션, Naver/Kakao OAuth 로그인, 전략 생성/목록/상세/수정/상태 변경/LLM 구조화 흐름까지 1차 구현된 상태입니다. 또한 `strategy_runs` 기반 실행 이력 저장/조회, `POST /strategies/:id/run` 수동 실행 API, `@nestjs/schedule` 기반 자동 실행 흐름, 실제 Upbit 캔들 수집, 사용자별 Upbit credential 암호화 저장, live portfolio 조회, paper portfolio 조회 분기까지 진행된 상태입니다.
+현재 백엔드는 NestJS + TypeORM + PostgreSQL + Scalar 기반으로 로컬 회원가입/로그인, 쿠키 기반 access/refresh token, DB 세션, Naver/Kakao OAuth 로그인, 전략 생성/목록/상세/수정/상태 변경/LLM 구조화 흐름까지 1차 구현된 상태입니다. 또한 `strategy_runs` 기반 실행 이력 저장/조회, `POST /strategies/:id/run` 수동 실행 API, `@nestjs/schedule` 기반 자동 실행 흐름, 실제 Upbit 캔들 수집, 사용자별 Upbit credential 암호화 저장, live portfolio 조회, paper portfolio 조회 분기, Naver 뉴스 수집, 전략별 데이터 접근 권한, 전략 판단 모드 설정까지 진행된 상태입니다.
 
 2026-06-23 현재 중요한 진행 상태:
 
@@ -20,23 +20,29 @@
 - `paper` 전략은 `PaperPortfolioService`의 paper portfolio를 조회합니다.
 - `live` 전략은 기존처럼 Upbit credential 복호화 후 Upbit `/v1/accounts`를 조회합니다.
 - paper 전략 실행 시 Upbit credential 없이도 portfolio step이 성공하는 방향으로 정리했습니다.
-- 현재 `StrategyExecutionService.execute()` 기준 다음 mock 단계는 `news`입니다.
-- 다음 작업은 `NewsDataService` skeleton을 만들고 `collectNews()`를 async 서비스 기반으로 분리하는 것입니다.
+- `src/news` 모듈을 추가했고 `NewsDataService`가 Naver News Search API를 호출합니다.
+- `createNewsQuery()`를 추가해 `KRW-BTC` 같은 market 값을 뉴스 검색어로 변환합니다.
+- `StrategyExecutionService.collectNews()`를 async로 변경했고, `allowNewsSearch=true`일 때 뉴스를 수집합니다.
+- `allowNewsSearch=false`인 전략은 외부 뉴스 API를 호출하지 않고 `news` step을 `skipped`로 저장합니다.
+- `StrategyEntity`에 `allowMarketData`, `allowNewsSearch`, `strategyJudgmentMode`를 추가했습니다.
+- `CreateStrategyDto`, `UpdateStrategyDto`, `StrategyResponseDto`, Scalar docs에 위 설정값을 반영했습니다.
+- `StructuredStrategy`에서 사용하지 않는 `allowOnchainData`를 제거했습니다.
+- parse 저장 직전 `allowMarketData`, `allowNewsSearch`, `judgment`를 서버의 `StrategyEntity` 값으로 보정합니다.
+- `1782240000000-AddStrategyDataPermissions.ts` migration 하나에 `allow_market_data`, `allow_news_search`, `strategy_judgment_mode` 추가를 합쳤습니다.
+- 이 migration은 아직 실행 전이므로 다음 작업 시작 시 `pnpm migration:run`이 필요합니다.
 - 2026-06-23 기준 아래 검증은 통과했습니다.
 
 ```bash
 pnpm exec tsc --noEmit
-pnpm exec eslint "src/user/**/*.ts" "src/auth/**/*.ts" "src/paper-trading/**/*.ts"
+pnpm exec eslint "src/strategy/**/*.ts" "src/database/migrations/1782240000000-AddStrategyDataPermissions.ts"
 ```
 
 다음 작업 방향:
 
-- `src/news` 또는 `src/strategy/services/news-data.service.ts` 형태로 뉴스 수집 책임을 분리합니다.
-- `StrategyExecutionService.collectNews()`를 async로 변경합니다.
-- `structuredStrategy.dataPermissions.allowNewsSearch=false`이면 기존처럼 `skipped`를 반환합니다.
-- `allowNewsSearch=true`이면 `NewsDataService`를 호출해 기사 목록 형태의 output을 반환합니다.
-- 처음에는 mock news provider로 시작하고, 이후 실제 검색 API 또는 뉴스 API를 연결합니다.
-- news step이 안정화되면 그 다음 순서로 AI decision, risk check, paper order 순서로 확장합니다.
+- DB에 아직 적용하지 않은 migration을 실행합니다.
+- Scalar에서 전략 생성/수정/parse 응답에 `allowMarketData`, `allowNewsSearch`, `strategyJudgmentMode`, `structuredStrategy.judgment`가 잘 보이는지 확인합니다.
+- `isStructuredStrategy()`가 `judgment` 값을 검증하는지 확인합니다.
+- 그 다음 순서로 AI decision, risk check, paper order 순서로 확장합니다.
 
 2026-06-22 현재 중요한 진행 상태:
 
@@ -349,6 +355,14 @@ TypeORM 연결 관련 파일:
 - `1780033891985-CreateSocialAccounts.ts`
 - `1780380362818-CreateStrategies.ts`
 - `1781957638841-CreateStrategyRuns.ts`
+
+생성됐지만 아직 실행 전인 migration:
+
+- `1782240000000-AddStrategyDataPermissions.ts`
+  - `strategies.allow_market_data`
+  - `strategies.allow_news_search`
+  - `strategy_judgment_mode` enum
+  - `strategies.strategy_judgment_mode`
 
 현재 핵심 테이블:
 
@@ -948,6 +962,9 @@ GET /auth/kakao/callback
 - parse 성공 여부는 별도 `parseStatus`를 두지 않고 `structuredStrategy !== null` 여부로 판단합니다.
 - active 전환은 이제 단순 존재 여부가 아니라 `isStructuredStrategy()` 런타임 검증까지 통과해야 가능합니다.
 - LLM이 `source.prompt`, `source.market`, `marketDataConfig.symbol`을 잘못 반환해도 저장 전 서버의 전략 값으로 보정합니다.
+- LLM이 `dataPermissions`나 `judgment`를 임의로 반환해도 저장 전 서버의 `StrategyEntity` 설정값으로 보정합니다.
+- `allowMarketData`, `allowNewsSearch`, `strategyJudgmentMode`는 AI가 결정하는 값이 아니라 사용자가 설정하는 전략 실행 정책입니다.
+- UI에서 parse 이후 판단 모드를 함께 보여줄 수 있도록 `structuredStrategy.judgment`에도 현재 `strategyJudgmentMode` 값을 스냅샷처럼 저장합니다.
 
 구조화 관련 파일:
 
@@ -961,6 +978,7 @@ GET /auth/kakao/callback
   - 유효한 결과를 얻으면 DB 기준 strategy 값으로 source/market symbol을 보정한 뒤 반환합니다.
 - `src/strategy/validators/structured-strategy.validator.ts`
   - DB에서 꺼낸 `jsonb` 값이 실제 `StructuredStrategy` 형태인지 런타임에서 검사합니다.
+  - `judgment`는 `"ai"` 또는 `"user"`만 허용합니다.
   - `StrategyService.activateStrategy()`에서 active 전환 전에 사용합니다.
 - `src/strategy/data/system.prompt.ts`
   - LLM에게 반환해야 하는 `StructuredStrategy` JSON 구조와 안전 정책을 알려주는 system prompt입니다.
@@ -990,12 +1008,12 @@ GET /auth/kakao/callback
   },
   "dataPermissions": {
     "allowNewsSearch": true,
-    "allowMarketData": true,
-    "allowOnchainData": false
+    "allowMarketData": true
   },
+  "judgment": "user",
   "marketDataConfig": {
     "symbol": "KRW-BTC",
-    "timeframes": ["15m", "1h", "4h", "1d"],
+    "timeframes": ["15m", "30m", "1h"],
     "primaryTimeframe": "1h"
   },
   "riskPreferences": {
@@ -1027,12 +1045,15 @@ exchange
 market
 prompt
 strategy_mode
+strategy_judgment_mode
 interval_minutes
 schedule_anchor_at
 next_run_at
 enabled
 strategy_status
 structured_strategy
+allow_market_data
+allow_news_search
 created_at
 updated_at
 deleted_at
@@ -1328,7 +1349,7 @@ psql -d agentrade -c "select id, user_id, name, market, strategy_mode, strategy_
 
 ## 16. 바로 다음 작업 추천
 
-현재 코드 기준으로 parse와 LLM 연동 수동 검증, active 전환, scheduler 기반 run 생성, `strategy_runs` 기록 저장/조회, `POST /strategies/:id/run` 수동 실행 API, `StrategyExecutionService` 기반 workflow 분리, 실제 Upbit 캔들 수집, 사용자별 Upbit credential 암호화 저장, live portfolio 조회, paper portfolio 조회 분기까지 진행되었습니다. 다음 작업은 `StrategyExecutionService`의 `news` step을 실제 서비스로 분리하는 것입니다.
+현재 코드 기준으로 parse와 LLM 연동 수동 검증, active 전환, scheduler 기반 run 생성, `strategy_runs` 기록 저장/조회, `POST /strategies/:id/run` 수동 실행 API, `StrategyExecutionService` 기반 workflow 분리, 실제 Upbit 캔들 수집, 사용자별 Upbit credential 암호화 저장, live portfolio 조회, paper portfolio 조회 분기, Naver 뉴스 수집, 전략별 데이터 접근 권한, 전략 판단 모드 저장까지 진행되었습니다. 다음 작업은 migration 적용 후 `AI decision`, `risk check`, `paper order`를 실제 구조로 바꾸는 것입니다.
 
 현재 `StrategyRunService.runByStrategy()`는 다음 흐름을 갖습니다.
 
@@ -1352,16 +1373,15 @@ psql -d agentrade -c "select id, user_id, name, market, strategy_mode, strategy_
 
 바로 이어서 할 작업:
 
-- `NewsDataService` skeleton을 추가합니다.
-- `StrategyExecutionService.collectNews()`를 async로 변경합니다.
-- `allowNewsSearch=false`이면 `news` step을 `skipped`로 유지합니다.
-- `allowNewsSearch=true`이면 `NewsDataService`를 호출합니다.
-- 초기 `NewsDataService`는 mock 기사 목록을 반환해도 됩니다.
-- news step output은 `articles`, `query`, `fetchedAt` 정도의 구조로 시작합니다.
-- `POST /strategies/:id/run` 후 `GET /strategy-runs/:runId`에서 `news` step output이 저장되는지 확인합니다.
-- 이후 실제 검색 API 또는 뉴스 API를 연결합니다.
+- `pnpm migration:run`으로 `allow_market_data`, `allow_news_search`, `strategy_judgment_mode` 컬럼을 DB에 적용합니다.
+- Scalar에서 전략 생성/수정 API의 `strategyJudgmentMode`, `allowMarketData`, `allowNewsSearch` 요청/응답을 확인합니다.
+- `POST /strategies/:id/parse` 후 `structuredStrategy.dataPermissions`와 `structuredStrategy.judgment`가 서버 설정값으로 저장되는지 확인합니다.
+- `POST /strategies/:id/run` 후 `GET /strategy-runs/:runId`에서 `market_data`, `portfolio`, `news` step output이 저장되는지 확인합니다.
+- 그 다음 `AI decision` 단계를 별도 service로 분리합니다.
+- 이후 `risk check`를 실제 정책 기반으로 구현합니다.
+- 그 다음 `paper order / paper fill` 테이블과 가상 체결 로직을 설계합니다.
 
-추천 폴더 구조:
+현재 news 폴더 구조:
 
 ```txt
 src/news/
@@ -1379,9 +1399,10 @@ src/news/
 - `live` 전략은 아직 주문 실행으로 연결하지 않습니다.
 - `live` 전략은 `user.liveTradingEnabled`, human review, risk check 정책이 붙기 전까지 읽기 중심으로만 유지합니다.
 - `CREDENTIAL_ENCRYPTION_KEY`는 credential 저장/복호화에 필수입니다.
-- 뉴스 수집은 우선 `NewsDataService` skeleton만 만들고, 나중에 검색 API 또는 뉴스 API를 연결합니다.
+- 뉴스 수집은 `NewsDataService`에서 Naver News Search API를 사용합니다.
 - `allowNewsSearch=false`인 전략에서는 외부 뉴스 검색을 호출하면 안 됩니다.
-- 실제 뉴스 API를 붙이기 전까지는 mock provider로 실행 결과 구조만 먼저 안정화합니다.
+- `strategyJudgmentMode`는 AI가 정하는 값이 아니라 사용자가 정하는 실행 정책입니다.
+- `structuredStrategy.judgment`는 UI 표시와 실행 시점 스냅샷 용도로 저장합니다.
 - 이후 LangGraph로 전환할 때는 market data, portfolio, news 수집 흐름이 `collect_data` 노드의 내부 구현이 될 가능성이 큽니다.
 
 완료 후 확인할 흐름:
@@ -1417,6 +1438,8 @@ pnpm exec eslint "src/**/*.ts"
 
 - AI decision 단계를 LLM 또는 별도 decision service로 분리합니다.
 - risk check 단계를 실제 정책 기반으로 구현합니다.
+- `strategyJudgmentMode=user`이면 주문을 즉시 실행하지 않고 사용자 승인 대기 상태로 남기는 흐름을 설계합니다.
+- `strategyJudgmentMode=ai`이면 risk check 통과 후 paper order 후보로 진행하는 흐름을 설계합니다.
 - paper order / paper fill 테이블과 가상 체결 로직을 설계합니다.
 - AI decision 단계는 나중에 LangGraph 또는 별도 decision service로 이동합니다.
 
@@ -1731,8 +1754,10 @@ PATCH /admin/users/:id/trading-permissions
 - Upbit public candle API 기반 실제 market data 수집 완료
 - Upbit credential 암호화 저장과 private account API 기반 live portfolio 조회 완료
 - paper/live portfolio 조회 분기 완료
-- 다음 작업: news data 수집 서비스 분리
-- 이후 작업: AI decision, risk check 연결
+- Naver News Search API 기반 news data 수집 완료
+- 전략별 `allowMarketData`, `allowNewsSearch`, `strategyJudgmentMode` 설정 추가
+- 다음 작업: AI decision, risk check 연결
+- 이후 작업: `strategyJudgmentMode` 기준 승인 대기 또는 paper order 진행 흐름 연결
 - SSE 또는 WebSocket으로 실행 상태 전달
 
 ### Phase 5. Risk Engine

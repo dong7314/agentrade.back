@@ -1,3 +1,5 @@
+import { StrategyJudgmentMode } from '../enums/strategy-judgment-mode.enum';
+
 export type StructuredStrategy = {
   version: 1;
   kind: 'ai_execution_plan';
@@ -12,8 +14,8 @@ export type StructuredStrategy = {
   dataPermissions: {
     allowNewsSearch: boolean;
     allowMarketData: boolean;
-    allowOnchainData: boolean;
   };
+  judgment: StrategyJudgmentMode;
   marketDataConfig: {
     symbol: string;
     timeframes: string[];

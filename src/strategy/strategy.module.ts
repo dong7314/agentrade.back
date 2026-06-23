@@ -3,6 +3,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 
 import { LlmModule } from '@/llm/llm.module';
 import { UserModule } from '@/user/user.module';
+import { NewsModule } from '@/news/news.module';
 import { UpbitModule } from '@/upbit/upbit.module';
 import { PaperTradingModule } from '@/paper-trading/paper-trading.module';
 
@@ -23,6 +24,7 @@ import { StrategyRunEntity } from './entities/strategy-run.entity';
     TypeOrmModule.forFeature([StrategyEntity, StrategyRunEntity]),
     UserModule,
     LlmModule,
+    NewsModule,
     UpbitModule,
     PaperTradingModule,
   ],

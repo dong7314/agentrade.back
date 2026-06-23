@@ -15,6 +15,7 @@ import { UserEntity } from '@/user/entities/user.entity';
 import { Exchange } from '../enums/exchange.enum';
 import { StrategyMode } from '../enums/strategy-mode.enum';
 import { StrategyStatus } from '../enums/strategy-status.enum';
+import { StrategyJudgmentMode } from '../enums/strategy-judgment-mode.enum';
 
 @Index('IDX_strategies_user_id', ['userId'])
 @Index('IDX_strategies_next_run_at', ['nextRunAt'])
@@ -56,6 +57,15 @@ export class StrategyEntity {
   })
   strategyMode!: StrategyMode;
 
+  @Column({
+    name: 'strategy_judgment_mode',
+    type: 'enum',
+    enum: Object.values(StrategyJudgmentMode),
+    enumName: 'strategy_judgment_mode',
+    default: StrategyJudgmentMode.USER,
+  })
+  strategyJudgmentMode!: StrategyJudgmentMode;
+
   @Column({ name: 'interval_minutes', type: 'int' })
   intervalMinutes!: number;
 
@@ -79,6 +89,12 @@ export class StrategyEntity {
 
   @Column({ name: 'structured_strategy', type: 'jsonb', nullable: true })
   structuredStrategy!: Record<string, unknown> | null;
+
+  @Column({ name: 'allow_market_data', type: 'boolean', default: true })
+  allowMarketData!: boolean;
+
+  @Column({ name: 'allow_news_search', type: 'boolean', default: false })
+  allowNewsSearch!: boolean;
 
   @CreateDateColumn({ name: 'created_at' })
   createdAt!: Date;

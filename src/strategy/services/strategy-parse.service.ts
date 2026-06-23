@@ -85,9 +85,14 @@ export class StrategyParseService {
         prompt: strategy.prompt,
         market: strategy.market,
       },
+      judgment: strategy.strategyJudgmentMode,
       marketDataConfig: {
         ...structuredStrategy.marketDataConfig,
         symbol: strategy.market,
+      },
+      dataPermissions: {
+        allowMarketData: strategy.allowMarketData,
+        allowNewsSearch: strategy.allowNewsSearch,
       },
     };
   }
