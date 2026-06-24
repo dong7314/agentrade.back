@@ -17,6 +17,8 @@ export const AiDecisionSystemPrompt = [
   '  }',
   '}',
   '',
+  'Write reason, evidence, and riskNotes in Korean.',
+  'Keep only enum-like values such as decision and orderType in English exactly as specified.',
   'confidence must be between 0 and 1.',
   'reason must be detailed and specific. Write 4 to 6 complete sentences explaining why the decision was made.',
   'reason should mention the most important market data, portfolio state, news, asset summary, uncertainty, and missing or failed data when relevant.',
