@@ -4,6 +4,7 @@ import { LlmService } from '@/llm/services/llm.service';
 
 import { StrategyEntity } from '../entities/strategy.entity';
 
+import { isRecord } from '@/common/utils/is-record';
 import { isStructuredStrategy } from '../validators/structured-strategy.validator';
 
 import { ParseSystemPrompt } from '../data/parse-system.prompt';
@@ -28,12 +29,16 @@ export class StrategyParseService {
       });
 
       const result = this.parseLlmJsonContent(content);
+      const normalizedResult = this.normalizeStructuredStrategyCandidate(
+        result,
+        strategy,
+      );
 
-      if (isStructuredStrategy(result)) {
-        return this.normalizeStructuredStrategy(result, strategy);
+      if (isStructuredStrategy(normalizedResult)) {
+        return normalizedResult;
       }
 
-      previousInvalidResult = result;
+      previousInvalidResult = normalizedResult;
     }
 
     throw new BadRequestException(
@@ -75,19 +80,27 @@ export class StrategyParseService {
   }
 
   // llm이 잘못된 market을 반환해도 저장 시에 database 기준으로 마켓 등록
-  private normalizeStructuredStrategy(
-    structuredStrategy: StructuredStrategy,
+  private normalizeStructuredStrategyCandidate(
+    value: unknown,
     strategy: StrategyEntity,
-  ): StructuredStrategy {
+  ): unknown {
+    if (!isRecord(value)) {
+      return value;
+    }
+
+    const marketDataConfig = isRecord(value.marketDataConfig)
+      ? value.marketDataConfig
+      : {};
+
     return {
-      ...structuredStrategy,
+      ...value,
       source: {
         prompt: strategy.prompt,
         market: strategy.market,
       },
       judgment: strategy.strategyJudgmentMode,
       marketDataConfig: {
-        ...structuredStrategy.marketDataConfig,
+        ...marketDataConfig,
         symbol: strategy.market,
       },
       dataPermissions: {

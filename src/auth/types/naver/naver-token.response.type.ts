@@ -1,3 +1,5 @@
+import { isRecord } from '@/common/utils/is-record';
+
 export type NaverTokenResponse = {
   access_token: string;
   refresh_token?: string;
@@ -13,8 +15,4 @@ export const isNaverTokenResponse = (
     typeof value.access_token === 'string' &&
     typeof value.token_type === 'string'
   );
-};
-
-const isRecord = (value: unknown): value is Record<string, unknown> => {
-  return typeof value === 'object' && value !== null;
 };

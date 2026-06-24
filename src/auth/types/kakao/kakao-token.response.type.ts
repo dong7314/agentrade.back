@@ -1,3 +1,5 @@
+import { isRecord } from '@/common/utils/is-record';
+
 export type KakaoTokenResponse = {
   token_type: string;
   access_token: string;
@@ -16,8 +18,4 @@ export const isKakaoTokenResponse = (
     typeof value.access_token === 'string' &&
     typeof value.expires_in === 'number'
   );
-};
-
-const isRecord = (value: unknown): value is Record<string, unknown> => {
-  return typeof value === 'object' && value !== null;
 };

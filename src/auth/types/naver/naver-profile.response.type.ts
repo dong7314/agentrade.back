@@ -1,3 +1,5 @@
+import { isRecord } from '@/common/utils/is-record';
+
 export type NaverProfileResponse = {
   resultcode: string;
   message: string;
@@ -27,8 +29,4 @@ export const isNaverProfileResponse = (
   }
 
   return true;
-};
-
-const isRecord = (value: unknown): value is Record<string, unknown> => {
-  return typeof value === 'object' && value !== null;
 };

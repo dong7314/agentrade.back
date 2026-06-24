@@ -4,6 +4,8 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 
+import { isRecord } from '@/common/utils/is-record';
+
 import { AssetSummary, AssetSummarySignal } from '../types/asset-summary.type';
 
 @Injectable()
@@ -185,7 +187,7 @@ export class AssetSummaryService {
     try {
       const parsed: unknown = JSON.parse(value);
 
-      if (!this.isRecord(parsed)) {
+      if (!isRecord(parsed)) {
         return null;
       }
 
@@ -208,7 +210,7 @@ export class AssetSummaryService {
 
     const first: unknown = value[0];
 
-    if (!this.isRecord(first)) {
+    if (!isRecord(first)) {
       return null;
     }
 
@@ -217,7 +219,7 @@ export class AssetSummaryService {
 
   private firstElementRecord(value: unknown): Record<string, unknown> | null {
     // 대부분의 indicator query는 { elements: [...] } 형태라 첫 번째 element를 사용
-    if (!this.isRecord(value)) {
+    if (!isRecord(value)) {
       return null;
     }
 
@@ -229,7 +231,7 @@ export class AssetSummaryService {
 
     const first: unknown = elements[0];
 
-    if (!this.isRecord(first)) {
+    if (!isRecord(first)) {
       return null;
     }
 
@@ -243,7 +245,7 @@ export class AssetSummaryService {
     // technical.components처럼 중첩된 object 값을 안전하게 추출
     const child = value?.[key];
 
-    if (!this.isRecord(child)) {
+    if (!isRecord(child)) {
       return null;
     }
 
@@ -251,7 +253,7 @@ export class AssetSummaryService {
   }
 
   private recordOrNull(value: unknown): Record<string, unknown> | null {
-    if (!this.isRecord(value)) {
+    if (!isRecord(value)) {
       return null;
     }
 
@@ -361,9 +363,5 @@ export class AssetSummaryService {
     }
 
     return symbol.toUpperCase();
-  }
-
-  private isRecord(value: unknown): value is Record<string, unknown> {
-    return typeof value === 'object' && value !== null && !Array.isArray(value);
   }
 }

@@ -1,15 +1,12 @@
 // src/strategy/validators/ai-decision-result.validator.ts
 
+import { isRecord } from '@/common/utils/is-record';
 import { AiDecisionResult } from '../types/ai-decision-result.type';
 
 function isStringArray(value: unknown): value is string[] {
   return (
     Array.isArray(value) && value.every((item) => typeof item === 'string')
   );
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 export function isAiDecisionResult(value: unknown): value is AiDecisionResult {

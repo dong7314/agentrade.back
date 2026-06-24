@@ -1,3 +1,5 @@
+import { isRecord } from '@/common/utils/is-record';
+
 export type KakaoProfileResponse = {
   id: number;
   kakao_account?: {
@@ -48,8 +50,4 @@ export const isKakaoProfileResponse = (
   if (!isRecord(profile)) return false;
 
   return profile.nickname === undefined || typeof profile.nickname === 'string';
-};
-
-const isRecord = (value: unknown): value is Record<string, unknown> => {
-  return typeof value === 'object' && value !== null;
 };
