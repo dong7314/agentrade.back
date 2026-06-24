@@ -4,6 +4,7 @@ import { StrategyEntity } from '../entities/strategy.entity';
 
 import { NewsDataService } from '@/data-collect/services/news-data.service';
 import { UpbitAuthService } from '@/upbit/services/upbit.auth.service';
+import { AiDecisionService } from './ai-decision.service';
 import { UpbitPublicService } from '@/upbit/services/upbit.public.service';
 import { UpbitPrivateService } from '@/upbit/services/upbit.private.service';
 import { AssetSummaryService } from '@/data-collect/services/asset-summary.service';
@@ -25,6 +26,7 @@ export class StrategyExecutionService {
   constructor(
     private readonly newsDataService: NewsDataService,
     private readonly upbitAuthService: UpbitAuthService,
+    private readonly aiDecisionService: AiDecisionService,
     private readonly upbitPublicService: UpbitPublicService,
     private readonly upbitPrivateService: UpbitPrivateService,
     private readonly assetSummaryService: AssetSummaryService,
@@ -40,33 +42,45 @@ export class StrategyExecutionService {
       );
     }
 
+    // 데이터 수집 단계
     const marketDataStep = await this.collectMarketData(structuredStrategy);
     const portfolioStep = await this.collectPortfolio(strategy);
     const newsStep = await this.collectNews(structuredStrategy);
     const assetSummaryStep = await this.collectAssetSummary(strategy);
-    const aiDecisionStep = this.makeAiDecision(structuredStrategy);
+
+    const collectedSteps = [
+      marketDataStep,
+      portfolioStep,
+      newsStep,
+      assetSummaryStep,
+    ];
+    // ai 결정 단계
+    const aiDecision = await this.aiDecisionService.decide({
+      structuredStrategy,
+      steps: collectedSteps,
+    });
+
+    const aiDecisionStep: StrategyRunStepResult = {
+      name: 'ai_decision',
+      status: 'succeeded',
+      summary: aiDecision.reason,
+      output: aiDecision,
+    };
+    // 리스트 체크 및 주문 단계
     const riskCheckStep = this.checkRisk(structuredStrategy);
     const orderStep = this.decideOrder(structuredStrategy);
 
-    return Promise.resolve({
-      decision: 'hold',
-      reason: 'mock execution only',
-      confidence: 0.5,
-      steps: [
-        marketDataStep,
-        portfolioStep,
-        newsStep,
-        assetSummaryStep,
-        aiDecisionStep,
-        riskCheckStep,
-        orderStep,
-      ],
+    return {
+      decision: aiDecision.decision,
+      reason: aiDecision.reason,
+      confidence: aiDecision.confidence,
+      steps: [...collectedSteps, aiDecisionStep, riskCheckStep, orderStep],
       strategy: {
         id: strategy.id,
         market: strategy.market,
         intervalMinutes: strategy.intervalMinutes,
       },
-    });
+    };
   }
 
   // 마켓 데이터 수집
@@ -195,32 +209,30 @@ export class StrategyExecutionService {
   private async collectAssetSummary(
     strategy: StrategyEntity,
   ): Promise<StrategyRunStepResult> {
-    const assetSummaryData = await this.assetSummaryService.getSummaryByMarket(
-      strategy.market,
-    );
-    const label = assetSummaryData.asset.koreanName ?? assetSummaryData.symbol;
+    try {
+      const assetSummaryData =
+        await this.assetSummaryService.getSummaryByMarket(strategy.market);
 
-    return {
-      name: 'asset_summary',
-      status: 'succeeded',
-      summary: `${label} 관련 시장 정보 요약 데이터를 수집하였습니다.`,
-      output: assetSummaryData,
-    };
-  }
+      const label =
+        assetSummaryData.asset.koreanName ?? assetSummaryData.symbol;
 
-  // AI 판단 생성
-  private makeAiDecision(
-    structuredStrategy: StructuredStrategy,
-  ): StrategyRunStepResult {
-    return {
-      name: 'ai_decision',
-      status: 'succeeded',
-      summary: `${structuredStrategy.version} mock 판단으로 hold를 반환했습니다.`,
-      output: {
-        decision: 'hold',
-        confidence: 0.5,
-      },
-    };
+      return {
+        name: 'asset_summary',
+        status: 'succeeded',
+        summary: `${label} 자산 요약 데이터를 수집했습니다.`,
+        output: assetSummaryData,
+      };
+    } catch (error) {
+      return {
+        name: 'asset_summary',
+        status: 'failed',
+        summary: `자산 요약 데이터 수집에 실패했습니다.`,
+        output: {
+          market: strategy.market,
+          reason: error instanceof Error ? error.message : 'unknown error',
+        },
+      };
+    }
   }
 
   // 리스크 체크

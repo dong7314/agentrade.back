@@ -12,8 +12,7 @@ export function isStrategyRunResult(
   if (
     record.decision !== 'buy' &&
     record.decision !== 'sell' &&
-    record.decision !== 'hold' &&
-    record.decision !== 'skip'
+    record.decision !== 'hold'
   ) {
     return false;
   }

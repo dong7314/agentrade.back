@@ -6,21 +6,21 @@ import { StrategyEntity } from '../entities/strategy.entity';
 
 import { isStructuredStrategy } from '../validators/structured-strategy.validator';
 
-import { SystemPrompt } from '../data/system.prompt';
+import { ParseSystemPrompt } from '../data/parse-system.prompt';
 import { StructuredStrategy } from '../types/structured-strategy.type';
 
 @Injectable()
 export class StrategyParseService {
   constructor(private readonly llmService: LlmService) {}
 
-  // parse mock 데이터 생성 로직
+  // parse 데이터 생성 로직
   async parseStrategy(strategy: StrategyEntity): Promise<StructuredStrategy> {
     const maxAttempts = 3;
     let previousInvalidResult: unknown;
 
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
       const content = await this.llmService.createChatCompletionContent({
-        systemPrompt: SystemPrompt,
+        systemPrompt: ParseSystemPrompt,
         userPrompt: this.createUserPrompt(strategy, {
           attempt,
           previousInvalidResult,

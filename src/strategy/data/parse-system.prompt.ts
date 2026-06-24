@@ -1,4 +1,4 @@
-export const SystemPrompt: string = [
+export const ParseSystemPrompt: string = [
   'You convert user trading strategy prompts into a strict JSON object.',
   'Return only valid JSON. Do not include markdown, comments, or extra text.',
   'The JSON must match this TypeScript-like structure:',

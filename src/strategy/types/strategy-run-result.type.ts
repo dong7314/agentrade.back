@@ -16,7 +16,7 @@ export type StrategyRunStepResult = {
 };
 
 export type StrategyRunResult = {
-  decision: 'buy' | 'sell' | 'hold' | 'skip';
+  decision: 'buy' | 'sell' | 'hold';
   reason: string;
   confidence: number;
   steps: StrategyRunStepResult[];
