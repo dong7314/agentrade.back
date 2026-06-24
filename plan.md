@@ -1,10 +1,67 @@
 # Agentrade Backend Plan
 
-최종 업데이트: 2026-06-23
+최종 업데이트: 2026-06-24
 
 이 문서는 `backend` 폴더에서 현재까지 어디까지 개발했는지, 이번 세션에서 어떤 방식으로 학습/개발을 진행했는지, 다른 컴퓨터에서 이어서 작업할 때 무엇부터 확인하면 되는지 정리한 인수인계 문서입니다.
 
-현재 백엔드는 NestJS + TypeORM + PostgreSQL + Scalar 기반으로 로컬 회원가입/로그인, 쿠키 기반 access/refresh token, DB 세션, Naver/Kakao OAuth 로그인, 전략 생성/목록/상세/수정/상태 변경/LLM 구조화 흐름까지 1차 구현된 상태입니다. 또한 `strategy_runs` 기반 실행 이력 저장/조회, `POST /strategies/:id/run` 수동 실행 API, `@nestjs/schedule` 기반 자동 실행 흐름, 실제 Upbit 캔들 수집, 사용자별 Upbit credential 암호화 저장, live portfolio 조회, paper portfolio 조회 분기, Naver 뉴스 수집, Upbit DataLab 자산 요약 수집, 전략별 데이터 접근 권한, 전략 판단 모드 설정까지 진행된 상태입니다.
+현재 백엔드는 NestJS + TypeORM + PostgreSQL + Scalar 기반으로 로컬 회원가입/로그인, 쿠키 기반 access/refresh token, DB 세션, Naver/Kakao OAuth 로그인, 전략 생성/목록/상세/수정/상태 변경/LLM 구조화 흐름까지 1차 구현된 상태입니다. 또한 `strategy_runs` 기반 실행 이력 저장/조회, `POST /strategies/:id/run` 수동 실행 API, `@nestjs/schedule` 기반 자동 실행 흐름, 실제 Upbit 캔들 수집, 사용자별 Upbit credential 암호화 저장, live portfolio 조회, paper portfolio 조회 분기, Naver 뉴스 수집, Upbit DataLab 자산 요약 수집, 전략별 데이터 접근 권한, 전략 판단 모드 설정, LLM 기반 AI decision 단계까지 진행된 상태입니다.
+
+2026-06-24 현재 중요한 진행 상태:
+
+- `src/common/utils/is-record.ts`를 추가해 여러 validator와 외부 API response type guard에서 반복되던 `isRecord()` 함수를 공통 유틸로 분리했습니다.
+- parse용 system prompt를 `src/strategy/data/parse-system.prompt.ts`로 정리했습니다.
+- `StrategyParseService`에서 LLM 응답을 바로 검증하지 않고, 서버 기준 값으로 먼저 보정한 뒤 `isStructuredStrategy()`를 수행하도록 변경했습니다.
+- parse 보정 시 `source.prompt`, `source.market`, `judgment`, `marketDataConfig.symbol`, `dataPermissions.allowMarketData`, `dataPermissions.allowNewsSearch`는 DB의 `StrategyEntity` 값을 기준으로 덮어씁니다.
+- 이 변경으로 LLM prompt에는 없지만 validator에서는 필수였던 `judgment` 때문에 parse가 실패하던 문제를 해결했습니다.
+- `src/strategy/types/ai-decision-result.type.ts`를 추가해 AI 판단 결과 타입을 정의했습니다.
+- AI decision의 `decision` 값은 `buy`, `sell`, `hold`만 허용하고 `skip`은 제거했습니다.
+- `suggestedOrder.sizeFraction`, `suggestedOrder.orderType`, `suggestedOrder.limitPrice`를 추가해 AI가 매수/매도 방향뿐 아니라 주문 비중 제안까지 반환할 수 있게 했습니다.
+- `src/strategy/data/ai-decision-system-prompt.ts`를 추가해 AI decision 전용 system prompt를 분리했습니다.
+- AI decision prompt는 `reason`, `evidence`, `riskNotes`를 한국어로 작성하도록 지시하고, `decision`, `orderType` 같은 enum 값은 영어로 유지하도록 지시합니다.
+- AI decision prompt는 `reason`을 4~6개의 문장으로 상세히 작성하고 market data, portfolio, news, asset summary, 불확실성, 실패한 데이터가 있으면 언급하도록 지시합니다.
+- `src/strategy/validators/ai-decision-result.validator.ts`를 추가해 AI decision JSON 응답을 검증합니다.
+- `AiDecisionService`를 추가해 `LlmService` 호출, user prompt 생성, JSON parse, validator 검증, 최대 3회 재시도 흐름을 구현했습니다.
+- `StrategyExecutionService`는 market data, portfolio, news, asset summary 수집 결과를 `AiDecisionService.decide()`에 전달합니다.
+- `StrategyRunResult.decision`, `reason`, `confidence`는 이제 mock 값이 아니라 AI decision 결과를 사용합니다.
+- `risk_check`, `order` 단계는 아직 mock/skipped 상태입니다.
+- `DELETE /strategies/:id` 전략 삭제 API를 추가했습니다.
+- 전략 삭제는 hard delete가 아니라 `deleted_at`을 기록하는 soft delete 방식으로 동작합니다.
+- 삭제 대상 전략이 `active`이거나 `enabled=true`이면 삭제하지 않고 400을 반환합니다.
+- 삭제 시 `strategyStatus=archived`, `enabled=false`, `nextRunAt=null`로 정리한 뒤 soft delete 처리합니다.
+- Scalar 문서에 전략 삭제 API를 추가했습니다.
+- `strategy-run-result.validator.ts`에서 `decision` 값은 `buy`, `sell`, `hold`만 허용하도록 정리했습니다.
+- `src/strategy/types/risk-check-result.type.ts`를 추가해 risk check 결과 타입을 정의했습니다.
+- `RiskCheckResult`는 `passed`, `retryable`, `reason`, `violations`, `adjustedOrder`를 포함합니다.
+- `RiskViolationCode`에 `DECISION_HOLD`, `CONFIDENCE_TOO_LOW`, `SIZE_FRACTION_ZERO`, `SIZE_FRACTION_TOO_HIGH`, `ORDER_AMOUNT_TOO_LOW`, `LIVE_TRADING_NOT_SUPPORTED`, `REQUIRED_DATA_FAILED`를 정의했습니다.
+- `MIN_UPBIT_ORDER_AMOUNT_KRW=5000` 상수를 추가해 Upbit 최소 주문 금액 기준을 risk check에서 사용할 수 있게 했습니다.
+- `src/strategy/services/risk-check.service.ts`를 추가했습니다.
+- `RiskCheckService`는 AI의 `suggestedOrder`, `confidence`, `riskPreferences`, 수집된 portfolio/market data step을 기준으로 주문 후보 생성 가능 여부를 판단합니다.
+- `hold` 판단은 즉시 주문 후보 없음으로 처리하고 `DECISION_HOLD` violation을 남깁니다.
+- `buy` 예상 주문 금액은 paper portfolio의 `cashBalance` 또는 live Upbit balances의 `KRW` balance를 기준으로 계산합니다.
+- `sell` 예상 주문 금액은 현재 전략 market의 보유 수량과 최신 종가를 기준으로 계산합니다.
+- paper sell은 `positions[].market`이 현재 market과 일치하는 포지션의 `quantity`를 사용합니다.
+- live sell은 `KRW-BTC`에서 `BTC`를 추출해 Upbit balances의 `currency=BTC` balance를 사용합니다.
+- 예상 주문 금액이 5,000원 미만이면 `ORDER_AMOUNT_TOO_LOW`, `retryable=true`로 처리합니다.
+- 현재 `RiskCheckService`는 아직 `StrategyModule` provider와 `StrategyExecutionService` workflow에는 연결하지 않았습니다.
+- 로컬 llama.cpp 연동 기준으로 parse와 run 테스트가 정상 동작하는 것을 수동 확인했습니다.
+
+2026-06-24 기준 아래 검증은 통과했습니다.
+
+```bash
+pnpm exec tsc --noEmit --pretty false
+pnpm exec eslint "src/common/**/*.ts" "src/auth/types/**/*.ts" "src/data-collect/**/*.ts" "src/strategy/**/*.ts"
+pnpm exec eslint "src/strategy/data/ai-decision-system-prompt.ts"
+```
+
+다음 작업 방향:
+
+- `RiskCheckService`를 `StrategyModule` providers에 등록합니다.
+- `StrategyExecutionService`에 `RiskCheckService`를 주입합니다.
+- 기존 mock `checkRisk()` 대신 `RiskCheckService.check()`를 호출하도록 연결합니다.
+- `risk_check` step output에 `RiskCheckResult`를 저장합니다.
+- risk check 실패 시 최종 run decision을 `hold`로 볼지, 원래 AI decision을 유지하되 order만 막을지 정책을 정합니다.
+- risk check 실패가 `retryable=true`일 때 `AiDecisionService.revise()`를 호출하는 흐름을 추가할지 결정합니다.
+- 이후 `strategyJudgmentMode` 기준으로 사용자 승인 대기 또는 paper order 생성 흐름을 연결합니다.
 
 2026-06-23 현재 중요한 진행 상태:
 
@@ -1354,7 +1411,7 @@ psql -d agentrade -c "select id, user_id, name, market, strategy_mode, strategy_
 
 ## 16. 바로 다음 작업 추천
 
-현재 코드 기준으로 parse와 LLM 연동 수동 검증, active 전환, scheduler 기반 run 생성, `strategy_runs` 기록 저장/조회, `POST /strategies/:id/run` 수동 실행 API, `StrategyExecutionService` 기반 workflow 분리, 실제 Upbit 캔들 수집, 사용자별 Upbit credential 암호화 저장, live portfolio 조회, paper portfolio 조회 분기, Naver 뉴스 수집, Upbit DataLab 자산 요약 수집, 전략별 데이터 접근 권한, 전략 판단 모드 저장까지 진행되었습니다. 다음 작업은 migration 적용 후 `AI decision`, `risk check`, `paper order`를 실제 구조로 바꾸는 것입니다.
+현재 코드 기준으로 parse와 LLM 연동 수동 검증, active 전환, scheduler 기반 run 생성, `strategy_runs` 기록 저장/조회, `POST /strategies/:id/run` 수동 실행 API, `StrategyExecutionService` 기반 workflow 분리, 실제 Upbit 캔들 수집, 사용자별 Upbit credential 암호화 저장, live portfolio 조회, paper portfolio 조회 분기, Naver 뉴스 수집, Upbit DataLab 자산 요약 수집, 전략별 데이터 접근 권한, 전략 판단 모드 저장, LLM 기반 AI decision, 전략 soft delete API, RiskCheckService 1차 작성까지 진행되었습니다. 다음 작업은 risk check를 실제 workflow에 연결한 뒤 `paper order`를 실제 구조로 바꾸는 것입니다.
 
 현재 `StrategyRunService.runByStrategy()`는 다음 흐름을 갖습니다.
 
@@ -1365,10 +1422,12 @@ psql -d agentrade -c "select id, user_id, name, market, strategy_mode, strategy_
 5. 같은 전략의 `running` 실행 이력이 이미 있는지 확인합니다.
 6. `strategy_runs` row를 `running` 상태로 먼저 저장합니다.
 7. `StrategyExecutionService.execute(strategy)`를 호출합니다.
-8. `StrategyExecutionService`는 `structuredStrategy`를 기반으로 market data, portfolio, news, asset summary, AI decision, risk check, order 단계 결과를 만듭니다.
-9. 결과가 `isStrategyRunResult()`를 통과하면 run을 `succeeded`로 업데이트합니다.
-10. 실패하면 run을 `failed`로 업데이트하고 `errorMessage`를 저장합니다.
-11. 성공 시 전략의 `nextRunAt`을 다음 실행 예정 시간으로 갱신합니다.
+8. `StrategyExecutionService`는 `structuredStrategy`를 기반으로 market data, portfolio, news, asset summary를 수집한 뒤 `AiDecisionService`에 전달합니다.
+9. `AiDecisionService`는 LLM을 호출해 `buy`, `sell`, `hold` 중 하나와 confidence, reason, evidence, riskNotes, suggestedOrder를 생성합니다.
+10. `StrategyExecutionService`는 AI decision 결과를 기반으로 risk check, order 단계 결과를 만듭니다. 현재 risk check와 order는 아직 mock/skipped입니다.
+11. 결과가 `isStrategyRunResult()`를 통과하면 run을 `succeeded`로 업데이트합니다.
+12. 실패하면 run을 `failed`로 업데이트하고 `errorMessage`를 저장합니다.
+13. 성공 시 전략의 `nextRunAt`을 다음 실행 예정 시간으로 갱신합니다.
 
 현재 `StrategySchedulerService`는 다음 흐름을 갖습니다.
 
@@ -1378,14 +1437,13 @@ psql -d agentrade -c "select id, user_id, name, market, strategy_mode, strategy_
 
 바로 이어서 할 작업:
 
-- `pnpm migration:run`으로 `allow_market_data`, `allow_news_search`, `strategy_judgment_mode` 컬럼을 DB에 적용합니다.
-- Scalar에서 전략 생성/수정 API의 `strategyJudgmentMode`, `allowMarketData`, `allowNewsSearch` 요청/응답을 확인합니다.
-- `POST /strategies/:id/parse` 후 `structuredStrategy.dataPermissions`와 `structuredStrategy.judgment`가 서버 설정값으로 저장되는지 확인합니다.
-- `POST /strategies/:id/run` 후 `GET /strategy-runs/:runId`에서 `market_data`, `portfolio`, `news`, `asset_summary` step output이 저장되는지 확인합니다.
-- `asset_summary` 수집 실패 시 run 전체를 실패시킬지, `asset_summary` step만 `failed`로 저장하고 AI decision을 중단할지 정책을 정리합니다.
-- 정한 정책에 맞춰 `StrategyExecutionService.collectAssetSummary()`에 `try/catch`와 실패 step 저장 흐름을 추가합니다.
-- 그 다음 `AI decision` 단계를 별도 service로 분리합니다.
-- 이후 `risk check`를 실제 정책 기반으로 구현합니다.
+- `RiskCheckService`를 `StrategyModule` providers에 등록합니다.
+- `StrategyExecutionService`에 `RiskCheckService`를 주입합니다.
+- 기존 mock `checkRisk()`를 `RiskCheckService.check()` 호출로 교체합니다.
+- `risk_check` step output에 `RiskCheckResult`를 저장합니다.
+- risk check 실패 시 `order` step은 계속 `skipped`로 둡니다.
+- risk check가 통과한 경우에도 아직 실제 주문은 만들지 않고, 다음 단계의 paper order 후보로 넘길 준비만 합니다.
+- 이후 retryable risk violation이 있을 때 `AiDecisionService.revise()`로 재판단시키는 흐름을 설계합니다.
 - 그 다음 `paper order / paper fill` 테이블과 가상 체결 로직을 설계합니다.
 
 현재 data-collect 폴더 구조:
@@ -1441,7 +1499,10 @@ GET /strategy-runs/:runId
 - `allowNewsSearch=true`인 전략에서는 `news.output.articles`가 반환됩니다.
 - `allowNewsSearch=false`인 전략에서는 `news.status=skipped`가 반환됩니다.
 - `asset_summary.output.fearGreed`, `asset_summary.output.technicalAnalysis`, `asset_summary.output.price`가 반환됩니다.
-- `ai_decision`, `risk_check`, `order`는 아직 mock이어도 됩니다.
+- `ai_decision.output.decision`은 `buy`, `sell`, `hold` 중 하나입니다.
+- `ai_decision.output.reason`, `ai_decision.output.evidence`, `ai_decision.output.riskNotes`는 한국어로 반환됩니다.
+- `ai_decision.output.suggestedOrder.sizeFraction`은 0 이상 1 이하입니다.
+- `risk_check`, `order`는 아직 mock이어도 됩니다.
 
 검증 명령어:
 
@@ -1452,12 +1513,11 @@ pnpm exec eslint "src/**/*.ts"
 
 그 다음 작업:
 
-- AI decision 단계를 LLM 또는 별도 decision service로 분리합니다.
 - risk check 단계를 실제 정책 기반으로 구현합니다.
 - `strategyJudgmentMode=user`이면 주문을 즉시 실행하지 않고 사용자 승인 대기 상태로 남기는 흐름을 설계합니다.
 - `strategyJudgmentMode=ai`이면 risk check 통과 후 paper order 후보로 진행하는 흐름을 설계합니다.
 - paper order / paper fill 테이블과 가상 체결 로직을 설계합니다.
-- AI decision 단계는 나중에 LangGraph 또는 별도 decision service로 이동합니다.
+- 이후 LangGraph로 전환할 때는 현재의 market data, portfolio, news, asset summary, ai decision, risk check 흐름을 각각 node로 옮깁니다.
 
 ### 16.1 다른 컴퓨터에서 시작 직후 확인
 
@@ -1773,8 +1833,14 @@ PATCH /admin/users/:id/trading-permissions
 - Naver News Search API 기반 news data 수집 완료
 - Upbit DataLab asset summary 기반 공포/탐욕, 기술적 분석, 가격/거래대금 요약 수집 완료
 - 전략별 `allowMarketData`, `allowNewsSearch`, `strategyJudgmentMode` 설정 추가
-- 다음 작업: `asset_summary` 실패 정책 정리와 실패 step 처리
-- 이후 작업: AI decision, risk check 연결
+- `AiDecisionService` 기반 LLM decision 연결 완료
+- AI decision 결과에 `decision`, `confidence`, `reason`, `evidence`, `riskNotes`, `suggestedOrder` 저장 완료
+- 전략 삭제 API soft delete 방식 추가 완료
+- `StrategyRunResult` validator에서 `decision=skip` 제거 완료
+- `RiskCheckService`와 `RiskCheckResult` 타입 1차 작성 완료
+- Upbit 최소 주문 금액 5,000원 미만 주문 후보 차단 로직 추가
+- paper/live portfolio 구조를 고려한 예상 주문 금액 계산 로직 추가
+- 다음 작업: `RiskCheckService`를 workflow에 연결
 - 이후 작업: `strategyJudgmentMode` 기준 승인 대기 또는 paper order 진행 흐름 연결
 - SSE 또는 WebSocket으로 실행 상태 전달
 
