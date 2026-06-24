@@ -235,6 +235,22 @@ export class StrategyService {
     return this.strategyRepository.save(strategy);
   }
 
+  async remove(input: { userId: number; strategyId: number }): Promise<void> {
+    const strategy = await this.findOneByUser(input.strategyId, input.userId);
+
+    if (strategy.strategyStatus === StrategyStatus.ACTIVE || strategy.enabled) {
+      throw new BadRequestException(
+        '활성화된 전략은 일시정지 후 삭제할 수 있습니다.',
+      );
+    }
+
+    strategy.strategyStatus = StrategyStatus.ARCHIVED;
+    strategy.enabled = false;
+    strategy.nextRunAt = null;
+
+    await this.strategyRepository.softRemove(strategy);
+  }
+
   // active 상태로 전략 상태 변경
   private activateStrategy(strategy: StrategyEntity): void {
     if (!isStructuredStrategy(strategy.structuredStrategy)) {

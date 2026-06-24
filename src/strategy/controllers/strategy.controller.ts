@@ -5,6 +5,7 @@ import {
   Param,
   Query,
   Patch,
+  Delete,
   HttpCode,
   UseGuards,
   Controller,
@@ -27,6 +28,7 @@ import {
   ApiParseStrategy,
   ApiCreateStrategy,
   ApiUpdateStrategy,
+  ApiDeleteStrategy,
   ApiUpdateStrategyStatus,
 } from '../docs/strategy-api.docs';
 
@@ -106,6 +108,20 @@ export class StrategyController {
     });
 
     return StrategyResponseDto.fromEntity(strategy);
+  }
+
+  @Delete(':id')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @UseGuards(JwtAuthGuard)
+  @ApiDeleteStrategy()
+  async remove(
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<void> {
+    await this.strategyService.remove({
+      userId: user.id,
+      strategyId: id,
+    });
   }
 
   @Patch(':id/status')

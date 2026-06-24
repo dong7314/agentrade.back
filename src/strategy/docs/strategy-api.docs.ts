@@ -9,6 +9,7 @@ import {
   ApiNotFoundResponse,
   ApiBadRequestResponse,
   ApiUnauthorizedResponse,
+  ApiNoContentResponse,
 } from '@nestjs/swagger';
 
 import { CreateStrategyDto } from '../dto/create-strategy.dto';
@@ -467,6 +468,34 @@ export function ApiRunStrategy() {
     }),
     ApiNotFoundResponse({
       description: '전략이 존재하지 않거나 현재 사용자의 전략이 아닙니다.',
+    }),
+  );
+}
+
+export function ApiDeleteStrategy() {
+  return applyDecorators(
+    ApiCookieAuth('access_token'),
+    ApiOperation({
+      summary: '전략 삭제',
+      description:
+        '로그인 사용자의 전략을 삭제합니다. 실제 row는 삭제하지 않고 deleted_at을 기록하는 soft delete 방식입니다. 활성화된 전략은 일시정지 후 삭제할 수 있습니다.',
+    }),
+    ApiParam({
+      name: 'id',
+      example: 1,
+      description: '삭제할 전략 ID입니다.',
+    }),
+    ApiNoContentResponse({
+      description: '전략 삭제 성공',
+    }),
+    ApiBadRequestResponse({
+      description: '활성화된 전략은 일시정지 후 삭제할 수 있습니다.',
+    }),
+    ApiNotFoundResponse({
+      description: '전략이 존재하지 않습니다.',
+    }),
+    ApiUnauthorizedResponse({
+      description: 'access_token 쿠키가 없거나 유효하지 않습니다.',
     }),
   );
 }
