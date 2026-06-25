@@ -2,9 +2,13 @@ import { BadGatewayException, Injectable } from '@nestjs/common';
 
 import { ConfigService } from '@nestjs/config';
 
-import { UpbitCandle } from '../types/candle/upbit-candle.type';
-import { UpbitMinuteUnit } from '../types/candle/upbit-minute-unit.type';
-import { UpbitMinuteCandleResponse } from '../types/candle/upbit-minute-candle.response';
+import {
+  UpbitTicker,
+  UpbitTickerResponse,
+} from '../types/public/upbit-ticker.type';
+import { UpbitCandle } from '../types/public/upbit-candle.type';
+import { UpbitMinuteUnit } from '../types/public/upbit-minute-unit.type';
+import { UpbitMinuteCandleResponse } from '../types/public/upbit-minute-candle.response';
 
 @Injectable()
 export class UpbitPublicService {
@@ -52,5 +56,38 @@ export class UpbitPublicService {
     } finally {
       clearTimeout(timeout);
     }
+  }
+
+  async getTickers(markets: string[]): Promise<UpbitTicker[]> {
+    if (markets.length === 0) {
+      return [];
+    }
+
+    const baseUrl = this.configService.getOrThrow<string>('UPBIT_BASE_URL');
+    const timeoutMs = this.configService.getOrThrow<number>('UPBIT_TIMEOUT_MS');
+
+    const url = new URL('/v1/ticker', baseUrl);
+    url.searchParams.set('markets', markets.join(','));
+
+    const response = await fetch(url, {
+      method: 'GET',
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+
+    if (!response.ok) {
+      throw new BadGatewayException('업비트 현재가 api 호출에 실패하였습니다.');
+    }
+
+    const data = (await response.json()) as UpbitTickerResponse[];
+
+    return data.map((item) => ({
+      market: item.market,
+      tradePrice: item.trade_price,
+      signedChangeRate: item.signed_change_rate,
+      highPrice: item.high_price,
+      lowPrice: item.low_price,
+      accTradeVolume24h: item.acc_trade_volume_24h,
+      accTradePrice24h: item.acc_trade_price_24h,
+    }));
   }
 }

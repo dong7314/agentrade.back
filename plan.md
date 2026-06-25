@@ -1,10 +1,94 @@
 # Agentrade Backend Plan
 
-최종 업데이트: 2026-06-24
+최종 업데이트: 2026-06-25
 
 이 문서는 `backend` 폴더에서 현재까지 어디까지 개발했는지, 이번 세션에서 어떤 방식으로 학습/개발을 진행했는지, 다른 컴퓨터에서 이어서 작업할 때 무엇부터 확인하면 되는지 정리한 인수인계 문서입니다.
 
-현재 백엔드는 NestJS + TypeORM + PostgreSQL + Scalar 기반으로 로컬 회원가입/로그인, 쿠키 기반 access/refresh token, DB 세션, Naver/Kakao OAuth 로그인, 전략 생성/목록/상세/수정/상태 변경/LLM 구조화 흐름까지 1차 구현된 상태입니다. 또한 `strategy_runs` 기반 실행 이력 저장/조회, `POST /strategies/:id/run` 수동 실행 API, `@nestjs/schedule` 기반 자동 실행 흐름, 실제 Upbit 캔들 수집, 사용자별 Upbit credential 암호화 저장, live portfolio 조회, paper portfolio 조회 분기, Naver 뉴스 수집, Upbit DataLab 자산 요약 수집, 전략별 데이터 접근 권한, 전략 판단 모드 설정, LLM 기반 AI decision 단계까지 진행된 상태입니다.
+현재 백엔드는 NestJS + TypeORM + PostgreSQL + Scalar 기반으로 로컬 회원가입/로그인, 쿠키 기반 access/refresh token, DB 세션, Naver/Kakao OAuth 로그인, 전략 생성/목록/상세/수정/상태 변경/LLM 구조화 흐름까지 1차 구현된 상태입니다. 또한 `strategy_runs` 기반 실행 이력 저장/조회, `POST /strategies/:id/run` 수동 실행 API, `@nestjs/schedule` 기반 자동 실행 흐름, 실제 Upbit 캔들 수집, 사용자별 Upbit credential 암호화 저장, live portfolio 조회, paper portfolio 조회 분기, Naver 뉴스 수집, Upbit DataLab 자산 요약 수집, 전략별 데이터 접근 권한, 전략 판단 모드 설정, LLM 기반 AI decision, risk check, paper order, live order 1차 실행 흐름까지 진행된 상태입니다.
+
+2026-06-25 현재 중요한 진행 상태:
+
+- `RiskCheckService`를 `StrategyExecutionService` workflow에 연결했습니다.
+- `RiskCheckService`는 AI decision의 `suggestedOrder`를 기준으로 주문 후보를 만들고, `confidence`, 주문 비중, 필수 데이터 수집 실패, Upbit 최소 주문 금액 5,000원, 지정가 주문의 `limitPrice` 유효성을 검사합니다.
+- `RiskCheckService`는 market 주문과 limit 주문을 모두 지원합니다.
+- market 주문은 최신 종가를 기준으로 예상 주문 금액/수량을 계산하고, limit 주문은 `limitPrice`를 기준으로 예상 주문 금액/수량을 계산합니다.
+- 지정가 주문에서 `limitPrice`가 없을 때 `LIMIT_PRICE_REQUIRED`와 `ORDER_ESTIMATION_FAILED`가 중복으로 붙지 않도록 정리했습니다.
+- `src/strategy/types/trade-order-result.type.ts`를 추가해 paper/live 주문 실행 결과 타입을 공통화했습니다.
+- `src/upbit/types/private/upbit-create-order.type.ts`를 추가해 Upbit 주문 생성/test 주문 입력과 응답 타입을 정의했습니다.
+- `UpbitPrivateService`에 `/v1/orders/test`, `/v1/orders` 호출 메서드를 추가했습니다.
+- `UpbitAuthService.createAccessToken()`은 주문 요청 body를 `query_hash`로 포함해 Upbit 주문 API 인증에 사용할 수 있도록 변경했습니다.
+- `src/upbit/services/live-order.service.ts`를 추가했습니다.
+- `LiveOrderService`는 risk check를 통과한 주문 후보를 Upbit 주문 payload로 변환합니다.
+- live market buy는 `side=bid`, `ord_type=price`, `price=총 매수 금액`으로 변환합니다.
+- live market sell은 `side=ask`, `ord_type=market`, `volume=매도 수량`으로 변환합니다.
+- live limit buy/sell은 `ord_type=limit`, `price`, `volume`으로 변환합니다.
+- `LiveOrderService`는 실제 주문 전 `/v1/orders/test`를 먼저 호출하고, test 주문이 성공한 경우에만 `/v1/orders`를 호출합니다.
+- `LiveOrderService`는 `UpbitModule` provider/export로 등록했고, `StrategyExecutionService`는 `UpbitModule`을 통해 주입받습니다.
+- `src/paper-trading/services/paper-order.service.ts`를 추가했습니다.
+- `PaperOrderService`는 risk check를 통과한 주문 후보를 transaction 안에서 paper account/position에 반영합니다.
+- paper buy는 `cashBalance`를 차감하고, 기존 position 수량과 평단을 갱신하거나 새 position을 생성합니다.
+- paper sell은 보유 수량을 차감하고 `cashBalance`를 증가시키며, 전량 매도 시 position을 제거합니다.
+- `PaperOrderService`는 `PaperTradingModule` provider/export로 등록했고, `StrategyExecutionService`에서 paper 전략 주문 실행에 사용합니다.
+- `StrategyExecutionService.decideOrder()`는 현재 아래 순서로 동작합니다.
+- risk check 실패: order step skipped.
+- `strategyJudgmentMode=user`: 자동 주문 없이 `approvalRequired=true`로 order step skipped.
+- `strategyMode=paper`: `PaperOrderService.execute()` 호출.
+- `strategyMode=live` 그리고 `strategyJudgmentMode=ai`: `LiveOrderService.execute()` 호출.
+- `UpbitPublicService`에 여러 market의 현재가를 한 번에 조회하는 `getTickers(markets: string[])`를 추가했습니다.
+- `getTickers()`는 Upbit public ticker API 응답을 서버 내부 타입으로 변환하고, API 실패 시 `BadGatewayException`을 반환합니다.
+- `PaperPortfolio` 타입을 현재 평가 중심 구조로 확장했습니다.
+- `PaperPortfolioService.getPortfolio()`는 이제 특정 market만 조회하거나 전체 paper position을 조회할 수 있도록 `market?: string`을 받습니다.
+- `PaperPortfolioService.getPortfolio()`는 paper position의 수량/평단은 DB 값으로 유지하고, 조회 시점의 Upbit 현재가를 붙여 `currentPrice`, `marketValueKrw`, `unrealizedPnlKrw`, `unrealizedPnlRate`, `allocationRatio`, `totalAssetValue`를 계산합니다.
+- `PaperTradingModule`은 `UpbitModule`을 import해 `PaperPortfolioService`가 `UpbitPublicService`를 사용할 수 있도록 정리했습니다.
+- 이 변경으로 전략 실행의 portfolio step과 이후 dashboard portfolio API가 같은 paper 평가 데이터를 사용할 수 있는 기반이 생겼습니다.
+- `paper-order.service.ts`, `live-order.service.ts`, `risk-check.service.ts`에 큰 단계가 보이도록 짧은 주석을 추가했습니다.
+- 앞으로 service 로직이나 코드 예시를 설명할 때는 사용자가 흐름을 빠르게 이해할 수 있도록 핵심 단계마다 한줄 주석을 함께 작성하는 방식으로 진행합니다.
+- 아래 관련 파일 lint 검증은 통과했습니다.
+
+```bash
+pnpm exec eslint "src/paper-trading/**/*.ts" "src/upbit/**/*.ts" "src/strategy/**/*.ts" --ignore-pattern "src/database/migrations/*.ts"
+```
+
+- 전체 `pnpm exec eslint "src/**/*.ts"`는 기존 migration 파일들의 Prettier 포맷 문제로 실패할 수 있습니다. 이번 변경 범위인 paper-trading/upbit/strategy 쪽 lint는 통과했습니다.
+- 현재 루트 `pnpm exec tsc --noEmit --pretty false`는 `example/frontend` 목업 프로젝트까지 같이 검사하면서 JSX 설정/alias 설정 차이로 실패할 수 있습니다. 백엔드 검증용 tsconfig에서 `example/**`를 제외하거나, 프론트엔드는 `example/frontend` 내부의 별도 tsconfig로 검사하는 방식으로 정리해야 합니다.
+
+2026-06-25 대시보드 목업 분석:
+
+- `example/frontend`는 현재 백엔드와 분리된 목업 Next.js 프로젝트입니다.
+- 핵심 목업 파일은 `example/frontend/src/components/dashboard/trade-dashboard.tsx`, `example/frontend/src/data/dashboard.ts`, `example/frontend/src/types/dashboard.ts`입니다.
+- 대시보드 첫 화면은 시장 요약, 캔들 차트, AI 판단, 리스크 검사, workflow, 포트폴리오 분포, 거래 로그를 사용합니다.
+- 목업 타입 기준으로 필요한 데이터는 `StrategySummary`, `ChartCandle`, `AiDecision`, `RiskCheckItem`, `WorkflowStep`, `PortfolioBalance`, `TradeLog`입니다.
+- `StrategySummary`에는 심볼/마켓별 현재가, 24시간 등락률, 24시간 고가/저가, 거래량, sparkline이 필요합니다.
+- `ChartCandle`에는 특정 market/timeframe의 OHLCV 캔들 리스트가 필요합니다.
+- `AiDecision`은 최신 strategy run의 AI decision step에서 `decision`, `confidence`, `reason`, 판단 시간을 뽑아 만들 수 있습니다.
+- `RiskCheckItem`은 최신 strategy run의 risk check step output, 특히 `violations`와 통과 여부를 UI 표시용으로 변환해 만들 수 있습니다.
+- `WorkflowStep`은 `strategy_runs.result.steps`를 UI 상태(`completed`, `active`, `waiting`)와 설명으로 매핑해 만들 수 있습니다.
+- `PortfolioBalance`는 paper/live portfolio의 현금과 보유 자산을 현재가 기준 평가금액과 비중으로 계산해야 합니다.
+- `TradeLog`는 우선 `strategy_runs.result.steps`를 기반으로 만들 수 있고, 이후 `paper_orders`, live order history, approval/audit log 테이블이 생기면 더 정확한 로그로 분리합니다.
+
+대시보드를 고려한 백엔드 서비스 설계 방향:
+
+- `UpbitPublicService`에 현재가 조회 기능을 추가하거나 별도 `MarketQuoteService`를 둡니다.
+- 현재가 조회는 Upbit public ticker API(`/v1/ticker?markets=KRW-BTC,KRW-ETH`)를 사용해 여러 market의 가격을 한 번에 가져오는 방향이 좋습니다.
+- `MarketQuoteService`는 dashboard, paper portfolio 평가, risk/order 계산 보조에서 같이 쓸 수 있는 공통 가격 조회 계층으로 둡니다.
+- `PaperPortfolioService.getPortfolio()`는 현재처럼 현금/수량만 반환하지 않고, 현재가를 붙여 `currentPrice`, `marketValueKrw`, `unrealizedPnlKrw`, `unrealizedPnlRate`, `totalAssetValue`를 계산하도록 확장합니다.
+- 가격이 변해도 `paper_positions.quantity`, `paper_positions.average_entry_price`는 변경하지 않습니다. 가격 변동은 조회 시점의 평가값으로만 계산합니다.
+- `PortfolioValuationService` 또는 `PortfolioDashboardService`를 만들어 paper/live portfolio를 같은 화면 응답 구조로 변환하는 계층을 둘 수 있습니다.
+- live portfolio는 Upbit `/v1/accounts`로 보유 수량을 조회하고, 동일한 현재가 조회 계층을 통해 평가금액과 비중을 계산합니다.
+- dashboard API는 처음부터 너무 크게 만들지 않고, 아래 view API들을 순서대로 만드는 방향이 좋습니다.
+- `GET /dashboard/market-summaries`: 주요 market 현재가/24h/sparkline.
+- `GET /dashboard/chart?market=KRW-BTC&timeframe=5m`: 캔들 차트.
+- `GET /dashboard/portfolio?mode=paper|live`: 현금, 보유 자산, 현재 평가금액, 비중, 미실현 손익.
+- `GET /dashboard/strategies/:strategyId/latest-run`: 최신 run의 AI 판단, risk check, workflow, order 결과.
+- `GET /dashboard/trade-logs`: run step 기반 로그. 이후 주문/승인/audit 테이블이 생기면 소스 확장.
+
+다음 작업 방향:
+
+- `DashboardService` 또는 `PortfolioDashboardService`를 추가해 frontend 목업 타입에 가까운 응답 DTO를 설계합니다.
+- 우선 `GET /dashboard/portfolio?mode=paper|live`부터 만들고, paper mode에서는 현재 확장된 `PaperPortfolioService.getPortfolio()`를 사용합니다.
+- live mode는 Upbit `/v1/accounts` 결과와 `UpbitPublicService.getTickers()`를 조합해 paper portfolio와 비슷한 평가 구조로 변환합니다.
+- 그 다음 `GET /dashboard/market-summaries`, `GET /dashboard/chart`, `GET /dashboard/strategies/:strategyId/latest-run`, `GET /dashboard/trade-logs` 순서로 확장합니다.
+- 이후 `paper_orders` 테이블과 approval/audit log 테이블을 설계해 거래 로그와 승인 대기 UI를 실제 데이터로 연결합니다.
 
 2026-06-24 현재 중요한 진행 상태:
 
@@ -1971,3 +2055,4 @@ audit_logs
 - 작성한 코드를 리뷰하고 위험한 부분을 짚는다.
 - 에러 메시지는 원인과 해결 방향을 함께 본다.
 - 기능을 한 번에 크게 만들지 않고 작은 인증 단위부터 검증한다.
+- Codex가 코드 예시를 전달할 때는 핵심 흐름이 보이도록 service 메서드의 주요 단계에 짧은 한줄 주석을 포함한다.

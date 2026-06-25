@@ -8,6 +8,7 @@ import { DataCollectModule } from '@/data-collect/data-collect.module';
 import { PaperTradingModule } from '@/paper-trading/paper-trading.module';
 
 import { StrategyService } from './services/strategy.service';
+import { RiskCheckService } from './services/risk-check.service';
 import { AiDecisionService } from './services/ai-decision.service';
 import { StrategyRunService } from './services/strategy-run.service';
 import { StrategyParseService } from './services/strategy-parse.service';
@@ -37,6 +38,7 @@ import { StrategyRunEntity } from './entities/strategy-run.entity';
     StrategySchedulerService,
     StrategyExecutionService,
     AiDecisionService,
+    RiskCheckService,
   ],
 })
 export class StrategyModule {}

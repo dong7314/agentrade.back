@@ -9,8 +9,15 @@ export type RiskViolationCode =
   | 'SIZE_FRACTION_ZERO'
   | 'SIZE_FRACTION_TOO_HIGH'
   | 'ORDER_AMOUNT_TOO_LOW'
-  | 'LIVE_TRADING_NOT_SUPPORTED'
-  | 'REQUIRED_DATA_FAILED';
+  | 'ORDER_ESTIMATION_FAILED'
+  | 'REQUIRED_DATA_FAILED'
+  | 'LIMIT_PRICE_REQUIRED';
+
+export type EstimatedOrder = {
+  amountKrw: number;
+  volume: number;
+  priceKrw: number;
+};
 
 // 리스크 위반 타입
 export type RiskViolation = {
@@ -28,6 +35,9 @@ export type RiskAdjustedOrder = {
   sizeFraction: number;
   orderType: AiOrderType;
   limitPrice: number | null;
+  priceKrw: number;
+  estimatedVolume: number;
+  estimatedOrderAmountKrw: number;
 };
 
 export type RiskCheckResult = {

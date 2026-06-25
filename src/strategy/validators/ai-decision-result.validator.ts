@@ -35,7 +35,9 @@ export function isAiDecisionResult(value: unknown): value is AiDecisionResult {
     order.orderType === 'market' || order.orderType === 'limit';
 
   const limitPriceValid =
-    order.limitPrice === null || typeof order.limitPrice === 'number';
+    order.orderType === 'market'
+      ? order.limitPrice === null
+      : typeof order.limitPrice === 'number' && order.limitPrice > 0;
 
   const holdSizeValid = value.decision !== 'hold' || order.sizeFraction === 0;
 

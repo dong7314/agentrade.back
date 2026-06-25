@@ -30,12 +30,25 @@ export class UpbitAuthService {
   ) {}
 
   createAccessToken(input: UpbitPlainCredential): string {
-    const payload = {
+    const payload: Record<string, string> = {
       access_key: input.accessKey,
       nonce: randomUUID(),
     };
 
-    return jwt.sign(payload, input.secretKey);
+    if (input.query) {
+      const queryString = Object.entries(input.query)
+        .map(([key, value]) => `${key}=${value}`)
+        .join('&');
+
+      payload.query_hash = createHash('sha512')
+        .update(queryString)
+        .digest('hex');
+      payload.query_hash_alg = 'SHA512';
+    }
+
+    return jwt.sign(payload, input.secretKey, {
+      algorithm: 'HS512',
+    });
   }
 
   createAuthorizationHeader(input: UpbitPlainCredential): string {

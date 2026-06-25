@@ -6,6 +6,7 @@ import {
   RiskViolation,
   RiskCheckResult,
   MIN_UPBIT_ORDER_AMOUNT_KRW,
+  EstimatedOrder,
 } from '../types/risk-check-result.type';
 import { StrategyMode } from '../enums/strategy-mode.enum';
 import { AiDecisionResult } from '../types/ai-decision-result.type';
@@ -22,6 +23,7 @@ export class RiskCheckService {
   }): RiskCheckResult {
     const violations: RiskViolation[] = [];
 
+    // hold 판단은 주문 후보를 만들지 않고 여기서 종료
     if (input.aiDecision.decision === 'hold') {
       return {
         passed: false,
@@ -38,6 +40,7 @@ export class RiskCheckService {
       };
     }
 
+    // 주문 계산에 필요한 필수 데이터 수집 실패 여부 확인
     const failedRequiredStep = input.collectedSteps.find(
       (step) =>
         (step.name === 'market_data' || step.name === 'portfolio') &&
@@ -54,6 +57,7 @@ export class RiskCheckService {
 
     const orderDecision = input.aiDecision.decision;
 
+    // AI 신뢰도와 주문 비중이 전략의 위험 설정을 넘지 않는지 검사
     const minimumConfidence =
       input.structuredStrategy.humanReview.requiredWhenConfidenceBelow;
 
@@ -85,35 +89,56 @@ export class RiskCheckService {
       });
     }
 
-    if (input.strategyMode === StrategyMode.LIVE) {
+    // 주문 타입과 가격 정보를 기준으로 예상 주문 금액 계산
+    const suggestedOrder = input.aiDecision.suggestedOrder;
+
+    let estimatedOrder: EstimatedOrder | null = null;
+
+    if (
+      suggestedOrder.orderType === 'limit' &&
+      (suggestedOrder.limitPrice === null || suggestedOrder.limitPrice <= 0)
+    ) {
       violations.push({
-        code: 'LIVE_TRADING_NOT_SUPPORTED',
-        message: '현재 단계에서는 live 주문 후보 생성을 허용하지 않습니다.',
-        retryable: false,
+        code: 'LIMIT_PRICE_REQUIRED',
+        message: '지정가 주문에는 0보다 큰 limitPrice가 필요합니다.',
+        retryable: true,
+      });
+    } else {
+      estimatedOrder = this.estimateOrder({
+        market: input.structuredStrategy.marketDataConfig.symbol,
+        decision: orderDecision,
+        orderType: suggestedOrder.orderType,
+        limitPrice: suggestedOrder.limitPrice,
+        sizeFraction: suggestedOrder.sizeFraction,
+        collectedSteps: input.collectedSteps,
       });
     }
 
-    const estimatedOrderAmountKrw = this.estimateOrderAmountKrw({
-      market: input.structuredStrategy.marketDataConfig.symbol,
-      decision: orderDecision,
-      sizeFraction: input.aiDecision.suggestedOrder.sizeFraction,
-      collectedSteps: input.collectedSteps,
-    });
+    // 지정가 가격 누락처럼 이미 원인이 명확한 경우 중복 실패 사유를 막음
+    const hasLimitPriceViolation = violations.some(
+      (violation) => violation.code === 'LIMIT_PRICE_REQUIRED',
+    );
 
-    if (
-      estimatedOrderAmountKrw !== null &&
-      estimatedOrderAmountKrw < MIN_UPBIT_ORDER_AMOUNT_KRW
+    if (estimatedOrder === null && !hasLimitPriceViolation) {
+      violations.push({
+        code: 'ORDER_ESTIMATION_FAILED',
+        message: '주문 금액과 수량을 계산할 수 없습니다.',
+        retryable: false,
+      });
+    } else if (
+      estimatedOrder !== null &&
+      estimatedOrder.amountKrw < MIN_UPBIT_ORDER_AMOUNT_KRW
     ) {
       violations.push({
         code: 'ORDER_AMOUNT_TOO_LOW',
-        message: `예상 주문 금액 ${estimatedOrderAmountKrw}원이 Upbit 최소 주문 금액 ${MIN_UPBIT_ORDER_AMOUNT_KRW}원보다 낮습니다.`,
+        message: `예상 주문 금액 ${estimatedOrder.amountKrw}원이 Upbit 최소 주문 금액 ${MIN_UPBIT_ORDER_AMOUNT_KRW}원보다 낮습니다.`,
         retryable: true,
         minOrderAmountKrw: MIN_UPBIT_ORDER_AMOUNT_KRW,
-        estimatedOrderAmountKrw,
+        estimatedOrderAmountKrw: estimatedOrder.amountKrw,
       });
     }
 
-    if (violations.length > 0) {
+    if (estimatedOrder === null || violations.length > 0) {
       return {
         passed: false,
         retryable: violations.every((violation) => violation.retryable),
@@ -123,6 +148,7 @@ export class RiskCheckService {
       };
     }
 
+    // 모든 검사를 통과하면 실행 가능한 주문 후보를 반환
     return {
       passed: true,
       retryable: false,
@@ -133,20 +159,22 @@ export class RiskCheckService {
         sizeFraction: input.aiDecision.suggestedOrder.sizeFraction,
         orderType: input.aiDecision.suggestedOrder.orderType,
         limitPrice: input.aiDecision.suggestedOrder.limitPrice,
+        estimatedOrderAmountKrw: estimatedOrder.amountKrw,
+        estimatedVolume: estimatedOrder.volume,
+        priceKrw: estimatedOrder.priceKrw,
       },
     };
   }
 
-  // 예상 원화 주문 금액 계산
-  // buy일 때는 사용 가능한 KRW 금액에 주문 비중을 곱하고,
-  // sell일 때는 현재 전략 market의 보유 수량 * 최신 종가 * 주문 비중으로 계산
-  // 여기서 계산한 값이 Upbit 최소 주문 금액 5,000원보다 작은지 검사
-  private estimateOrderAmountKrw(input: {
+  // 포트폴리오와 최신 가격을 기준으로 예상 주문 금액과 수량 계산
+  private estimateOrder(input: {
     market: string;
     decision: 'buy' | 'sell';
+    orderType: 'market' | 'limit';
+    limitPrice: number | null;
     sizeFraction: number;
     collectedSteps: StrategyRunStepResult[];
-  }): number | null {
+  }): EstimatedOrder | null {
     const portfolioStep = input.collectedSteps.find(
       (step) => step.name === 'portfolio',
     );
@@ -161,6 +189,13 @@ export class RiskCheckService {
 
     const latestClose = this.extractLatestClose(marketDataStep.output);
 
+    const priceKrw =
+      input.orderType === 'limit' ? input.limitPrice : latestClose;
+
+    if (priceKrw === null || priceKrw <= 0) {
+      return null;
+    }
+
     if (latestClose === null) {
       return null;
     }
@@ -172,7 +207,13 @@ export class RiskCheckService {
         return null;
       }
 
-      return availableKrw * input.sizeFraction;
+      const amountKrw = availableKrw * input.sizeFraction;
+
+      return {
+        amountKrw,
+        volume: amountKrw / priceKrw,
+        priceKrw,
+      };
     }
 
     const baseAssetAmount = this.extractBaseAssetAmount({
@@ -184,7 +225,13 @@ export class RiskCheckService {
       return null;
     }
 
-    return baseAssetAmount * latestClose * input.sizeFraction;
+    const volume = baseAssetAmount * input.sizeFraction;
+
+    return {
+      amountKrw: volume * priceKrw,
+      volume,
+      priceKrw,
+    };
   }
 
   private extractLatestClose(output: Record<string, unknown>): number | null {

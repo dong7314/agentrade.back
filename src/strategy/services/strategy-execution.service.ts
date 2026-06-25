@@ -4,14 +4,17 @@ import { StrategyEntity } from '../entities/strategy.entity';
 
 import { NewsDataService } from '@/data-collect/services/news-data.service';
 import { UpbitAuthService } from '@/upbit/services/upbit.auth.service';
+import { RiskCheckService } from './risk-check.service';
+import { LiveOrderService } from '../../upbit/services/live-order.service';
 import { AiDecisionService } from './ai-decision.service';
+import { PaperOrderService } from '@/paper-trading/services/paper-order.service';
 import { UpbitPublicService } from '@/upbit/services/upbit.public.service';
 import { UpbitPrivateService } from '@/upbit/services/upbit.private.service';
 import { AssetSummaryService } from '@/data-collect/services/asset-summary.service';
 import { PaperPortfolioService } from '@/paper-trading/services/paper-portfolio.service';
 
 import { createNewsQuery } from '@/data-collect/utils/create-query';
-import { toUpbitMinuteUnit } from '@/upbit/types/candle/upbit-minute-unit.type';
+import { toUpbitMinuteUnit } from '@/upbit/types/public/upbit-minute-unit.type';
 import { isStructuredStrategy } from '../validators/structured-strategy.validator';
 
 import {
@@ -19,13 +22,18 @@ import {
   StrategyRunStepResult,
 } from '../types/strategy-run-result.type';
 import { StrategyMode } from '../enums/strategy-mode.enum';
+import { RiskCheckResult } from '../types/risk-check-result.type';
 import { StructuredStrategy } from '../types/structured-strategy.type';
+import { StrategyJudgmentMode } from '../enums/strategy-judgment-mode.enum';
 
 @Injectable()
 export class StrategyExecutionService {
   constructor(
     private readonly newsDataService: NewsDataService,
     private readonly upbitAuthService: UpbitAuthService,
+    private readonly riskCheckService: RiskCheckService,
+    private readonly liveOrderService: LiveOrderService,
+    private readonly paperOrderService: PaperOrderService,
     private readonly aiDecisionService: AiDecisionService,
     private readonly upbitPublicService: UpbitPublicService,
     private readonly upbitPrivateService: UpbitPrivateService,
@@ -67,8 +75,20 @@ export class StrategyExecutionService {
       output: aiDecision,
     };
     // 리스트 체크 및 주문 단계
-    const riskCheckStep = this.checkRisk(structuredStrategy);
-    const orderStep = this.decideOrder(structuredStrategy);
+    const riskCheck = this.riskCheckService.check({
+      aiDecision,
+      structuredStrategy,
+      strategyMode: strategy.strategyMode,
+      collectedSteps,
+    });
+    const riskCheckStep: StrategyRunStepResult = {
+      name: 'risk_check',
+      status: 'succeeded',
+      summary: riskCheck.reason,
+      output: riskCheck,
+    };
+
+    const orderStep = await this.decideOrder({ strategy, riskCheck });
 
     return {
       decision: aiDecision.decision,
@@ -235,25 +255,77 @@ export class StrategyExecutionService {
     }
   }
 
-  // 리스크 체크
-  private checkRisk(
-    structuredStrategy: StructuredStrategy,
-  ): StrategyRunStepResult {
-    return {
-      name: 'risk_check',
-      status: 'skipped',
-      summary: `${structuredStrategy.riskPreferences.riskLevel} mock 실행에서는 리스크 검사를 생략했습니다.`,
-    };
-  }
-
   // 결정 단계 생성
-  private decideOrder(
-    structuredStrategy: StructuredStrategy,
-  ): StrategyRunStepResult {
+  private async decideOrder(input: {
+    strategy: StrategyEntity;
+    riskCheck: RiskCheckResult;
+  }): Promise<StrategyRunStepResult> {
+    const { strategy, riskCheck } = input;
+
+    if (!riskCheck.passed) {
+      return {
+        name: 'order',
+        status: 'skipped',
+        summary: 'Risk check를 통과하지 못해 주문 생성을 생략했습니다.',
+        output: {
+          reason: riskCheck.reason,
+          violations: riskCheck.violations,
+        },
+      };
+    }
+
+    if (strategy.strategyJudgmentMode === StrategyJudgmentMode.USER) {
+      return {
+        name: 'order',
+        status: 'skipped',
+        summary: '사용자 확인 모드이므로 자동 주문을 생성하지 않았습니다.',
+        output: {
+          approvalRequired: true,
+          adjustedOrder: riskCheck.adjustedOrder,
+        },
+      };
+    }
+
+    if (strategy.strategyMode === StrategyMode.PAPER) {
+      const orderResult = await this.paperOrderService.execute({
+        userId: strategy.userId,
+        market: strategy.market,
+        riskCheck,
+      });
+
+      const status =
+        orderResult.status === 'failed'
+          ? 'failed'
+          : orderResult.status === 'skipped'
+            ? 'skipped'
+            : 'succeeded';
+
+      return {
+        name: 'order',
+        status,
+        summary: orderResult.reason,
+        output: orderResult,
+      };
+    }
+
+    const orderResult = await this.liveOrderService.execute({
+      userId: strategy.userId,
+      market: strategy.market,
+      riskCheck,
+    });
+
+    const status =
+      orderResult.status === 'failed'
+        ? 'failed'
+        : orderResult.status === 'skipped'
+          ? 'skipped'
+          : 'succeeded';
+
     return {
       name: 'order',
-      status: 'skipped',
-      summary: `${structuredStrategy.version} mock 실행에서는 주문을 생성하지 않았습니다.`,
+      status,
+      summary: orderResult.reason,
+      output: orderResult,
     };
   }
 }
