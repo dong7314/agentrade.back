@@ -1,10 +1,49 @@
 # Agentrade Backend Plan
 
-최종 업데이트: 2026-06-25
+최종 업데이트: 2026-06-26
 
 이 문서는 `backend` 폴더에서 현재까지 어디까지 개발했는지, 이번 세션에서 어떤 방식으로 학습/개발을 진행했는지, 다른 컴퓨터에서 이어서 작업할 때 무엇부터 확인하면 되는지 정리한 인수인계 문서입니다.
 
-현재 백엔드는 NestJS + TypeORM + PostgreSQL + Scalar 기반으로 로컬 회원가입/로그인, 쿠키 기반 access/refresh token, DB 세션, Naver/Kakao OAuth 로그인, 전략 생성/목록/상세/수정/상태 변경/LLM 구조화 흐름까지 1차 구현된 상태입니다. 또한 `strategy_runs` 기반 실행 이력 저장/조회, `POST /strategies/:id/run` 수동 실행 API, `@nestjs/schedule` 기반 자동 실행 흐름, 실제 Upbit 캔들 수집, 사용자별 Upbit credential 암호화 저장, live portfolio 조회, paper portfolio 조회 분기, Naver 뉴스 수집, Upbit DataLab 자산 요약 수집, 전략별 데이터 접근 권한, 전략 판단 모드 설정, LLM 기반 AI decision, risk check, paper order, live order 1차 실행 흐름까지 진행된 상태입니다.
+현재 백엔드는 NestJS + TypeORM + PostgreSQL + Scalar 기반으로 로컬 회원가입/로그인, 쿠키 기반 access/refresh token, DB 세션, Naver/Kakao OAuth 로그인, 전략 생성/목록/상세/수정/상태 변경/LLM 구조화 흐름까지 1차 구현된 상태입니다. 또한 `strategy_runs` 기반 실행 이력 저장/조회, `POST /strategies/:id/run` 수동 실행 API, `@nestjs/schedule` 기반 자동 실행 흐름, 실제 Upbit 캔들 수집, 사용자별 Upbit credential 암호화 저장, live portfolio 조회, paper portfolio 조회 분기, Naver 뉴스 수집, Upbit DataLab 자산 요약 수집, 전략별 데이터 접근 권한, 전략 판단 모드 설정, LLM 기반 AI decision, risk check, paper order, live order 1차 실행 흐름, 사용자 승인/거절 기반 주문 승인 대기 흐름까지 진행된 상태입니다.
+
+2026-06-26 현재 중요한 진행 상태:
+
+- `strategyJudgmentMode=user` 전략에서 risk check를 통과한 주문 후보를 바로 실행하지 않고 `strategy_order_approvals` 승인 대기 데이터로 저장하는 흐름을 추가했습니다.
+- `StrategyRunService`는 `StrategyExecutionService.execute()`에 `strategyRunId`를 넘기도록 변경했습니다.
+- `StrategyExecutionService.decideOrder()`는 사용자 확인 모드일 때 `StrategyOrderApprovalService.createPending()`을 호출하고, order step output에 `approvalRequired`, `approvalId`, `adjustedOrder`를 남깁니다.
+- `src/strategy/entities/strategy-order-approval.entity.ts`를 추가했습니다.
+- approval entity는 `userId`, `strategyId`, `strategyRunId`, `strategyMode`, `market`, `decision`, `orderType`, `decisionReason`, `adjustedOrder`, `riskCheckResult`, `orderResult`, `status`, `rejectReason`, `decidedAt`을 저장합니다.
+- `adjustedOrder`와 `riskCheckResult`는 승인/실행에 반드시 필요한 데이터라 `jsonb NOT NULL`로 정의했습니다.
+- `RiskAdjustedOrder`, `RiskCheckResult`, `TradeOrderResult`는 decorated property 타입으로만 사용되므로 `import type`으로 가져오도록 수정했습니다. 이 수정으로 `isolatedModules` + `emitDecoratorMetadata` 환경의 TS1272 오류를 해결했습니다.
+- `src/strategy/enums/strategy-order-approval-status.enum.ts`를 추가했습니다.
+- approval status는 `pending`, `approved`, `rejected`, `executed`, `failed`입니다.
+- `src/strategy/services/strategy-order-approval.service.ts`를 추가했습니다.
+- `findAllByUserId()`는 로그인 사용자의 approval 목록을 페이지네이션과 status 필터로 조회합니다.
+- `createPending()`은 risk check를 통과한 주문 후보만 승인 대기로 저장합니다.
+- `approve()`는 중복 승인으로 주문이 두 번 나가는 것을 막기 위해 `PENDING -> APPROVED` 조건부 update로 먼저 상태를 선점한 뒤 paper/live 주문 서비스를 호출합니다.
+- `reject()`도 `PENDING -> REJECTED` 조건부 update로 처리해 approve/reject 동시 요청 충돌을 줄였습니다.
+- 승인 성공 후 `PaperOrderService` 또는 `LiveOrderService`를 호출하고, 결과에 따라 approval status를 `executed` 또는 `failed`로 저장합니다.
+- `src/strategy/controllers/strategy-order-approval.controller.ts`를 추가했습니다.
+- 추가된 API는 `GET /strategy-order-approvals`, `POST /strategy-order-approvals/:id/approve`, `POST /strategy-order-approvals/:id/reject`입니다.
+- `src/strategy/dto/strategy-order-approval-response.dto.ts`에 응답 DTO와 `fromEntity()`, `fromEntities()` 변환 메서드를 추가했습니다.
+- `src/strategy/dto/reject-strategy-order-approval.dto.ts`를 추가해 거절 사유를 선택적으로 받을 수 있게 했습니다.
+- `src/strategy/docs/strategy-order-approval-api.docs.ts`를 추가해 Scalar 문서용 API decorator를 분리했습니다.
+- `StrategyModule`에 `StrategyOrderApprovalEntity`, `StrategyOrderApprovalService`, `StrategyOrderApprovalController`를 등록했습니다.
+- `src/database/migrations/1782440262054-CreateStrategyOrderApprovals.ts` migration 파일을 생성했습니다.
+- migration은 `strategy_order_approval_status` enum과 `strategy_order_approvals` 테이블을 생성합니다.
+- migration 파일은 생성되었지만, 실제 DB 적용 여부는 별도로 확인해야 합니다. 적용 명령은 `pnpm migration:run`입니다.
+- TypeORM schema 로딩 기준으로 `strategy_order_approvals` 생성 SQL이 정상 출력되는 것을 확인했습니다.
+
+검증:
+
+```bash
+./node_modules/.bin/eslint "src/strategy/**/*.ts"
+node -r ts-node/register -r tsconfig-paths/register ./node_modules/typeorm/cli.js -d src/database/data-source.ts schema:log
+```
+
+- strategy 범위 lint는 통과했습니다.
+- TypeORM schema 로딩은 통과했고, `adjusted_order jsonb NOT NULL`, `risk_check_result jsonb NOT NULL`로 생성되는 것을 확인했습니다.
+- 루트 `tsc --project tsconfig.build.json`는 기존과 동일하게 `example/frontend`가 백엔드 tsconfig에 포함되어 JSX/alias 오류가 발생할 수 있습니다. approval 코드 자체의 확인은 위 lint와 schema 로딩으로 진행했습니다.
 
 2026-06-25 현재 중요한 진행 상태:
 
@@ -84,11 +123,15 @@ pnpm exec eslint "src/paper-trading/**/*.ts" "src/upbit/**/*.ts" "src/strategy/*
 
 다음 작업 방향:
 
-- `DashboardService` 또는 `PortfolioDashboardService`를 추가해 frontend 목업 타입에 가까운 응답 DTO를 설계합니다.
-- 우선 `GET /dashboard/portfolio?mode=paper|live`부터 만들고, paper mode에서는 현재 확장된 `PaperPortfolioService.getPortfolio()`를 사용합니다.
-- live mode는 Upbit `/v1/accounts` 결과와 `UpbitPublicService.getTickers()`를 조합해 paper portfolio와 비슷한 평가 구조로 변환합니다.
-- 그 다음 `GET /dashboard/market-summaries`, `GET /dashboard/chart`, `GET /dashboard/strategies/:strategyId/latest-run`, `GET /dashboard/trade-logs` 순서로 확장합니다.
-- 이후 `paper_orders` 테이블과 approval/audit log 테이블을 설계해 거래 로그와 승인 대기 UI를 실제 데이터로 연결합니다.
+- 먼저 `pnpm migration:run`으로 `strategy_order_approvals` migration을 실제 DB에 적용합니다.
+- Scalar에서 `strategyJudgmentMode=user` 전략을 수동 실행해 `order` step에 `approvalRequired=true`, `approvalId`가 남는지 확인합니다.
+- `GET /strategy-order-approvals?status=pending`으로 승인 대기 주문 후보가 조회되는지 확인합니다.
+- `POST /strategy-order-approvals/:id/reject`로 거절 상태 전이가 되는지 확인합니다.
+- 별도 pending approval을 만든 뒤 `POST /strategy-order-approvals/:id/approve`로 paper 주문이 실행되고 approval status가 `executed` 또는 `failed`로 저장되는지 확인합니다.
+- live approval approve 테스트는 Upbit credential과 실제 주문 위험이 있으므로, paper 흐름이 안정화된 뒤 소액/테스트 정책을 다시 확인하고 진행합니다.
+- approval 수동 검증이 끝나면 `DashboardService` 또는 `PortfolioDashboardService`를 추가해 frontend 목업 타입에 가까운 응답 DTO를 설계합니다.
+- 대시보드 API는 `GET /dashboard/portfolio?mode=paper|live`부터 만들고, 이후 `GET /dashboard/market-summaries`, `GET /dashboard/chart`, `GET /dashboard/strategies/:strategyId/latest-run`, `GET /dashboard/trade-logs` 순서로 확장합니다.
+- 이후 `paper_orders` 테이블과 approval/audit log 테이블을 설계해 거래 로그와 승인 대기 UI를 더 정확한 데이터로 연결합니다.
 
 2026-06-24 현재 중요한 진행 상태:
 

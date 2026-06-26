@@ -1,0 +1,209 @@
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
+import { Repository } from 'typeorm';
+import { InjectRepository } from '@nestjs/typeorm';
+
+import { StrategyEntity } from '../entities/strategy.entity';
+import { StrategyOrderApprovalEntity } from '../entities/strategy-order-approval.entity';
+
+import { LiveOrderService } from '@/upbit/services/live-order.service';
+import { PaperOrderService } from '@/paper-trading/services/paper-order.service';
+
+import { createPaginationMeta } from '@/common/utils/create-pagination-meta';
+
+import { StrategyMode } from '../enums/strategy-mode.enum';
+import { RiskCheckResult } from '../types/risk-check-result.type';
+import { PaginatedResult } from '@/common/types/paginated.type';
+import { AiDecisionResult } from '../types/ai-decision-result.type';
+import { StrategyOrderApprovalStatus } from '../enums/strategy-order-approval-status.enum';
+import { FindStrategyOrderApprovalQueryDto } from '../dto/find-strategy-order-approval.query.dto';
+
+@Injectable()
+export class StrategyOrderApprovalService {
+  constructor(
+    @InjectRepository(StrategyOrderApprovalEntity)
+    private readonly approvalRepository: Repository<StrategyOrderApprovalEntity>,
+    private readonly liveOrderService: LiveOrderService,
+    private readonly paperOrderService: PaperOrderService,
+  ) {}
+
+  // 페이지를 통해서 결재 이력들 아이템을 가져오는 메서드
+  async findAllByUserId(
+    userId: number,
+    query: FindStrategyOrderApprovalQueryDto,
+  ): Promise<PaginatedResult<StrategyOrderApprovalEntity>> {
+    const { page, limit } = query;
+
+    const [items, total] = await this.approvalRepository.findAndCount({
+      where: {
+        userId,
+        ...(query.status ? { status: query.status } : {}),
+      },
+      order: { createdAt: 'DESC' },
+      skip: (page - 1) * limit,
+      take: limit,
+    });
+
+    return {
+      items,
+      meta: createPaginationMeta({ page, limit, total }),
+    };
+  }
+
+  // 사용자 id 및 approval id를 통하여 pending 상태의 approval을 반환
+  async findPendingByUser(
+    userId: number,
+    approvalId: number,
+  ): Promise<StrategyOrderApprovalEntity> {
+    const approval = await this.approvalRepository.findOneBy({
+      userId,
+      id: approvalId,
+      status: StrategyOrderApprovalStatus.PENDING,
+    });
+
+    if (!approval) {
+      throw new NotFoundException(
+        'Pending 상태인 주문 후보가 존재하지 않습니다.',
+      );
+    }
+
+    return approval;
+  }
+
+  // 승인 대기 상태 생성
+  async createPending(input: {
+    strategy: StrategyEntity;
+    strategyRunId: number;
+    aiDecision: AiDecisionResult;
+    riskCheck: RiskCheckResult;
+  }): Promise<StrategyOrderApprovalEntity> {
+    // risk check 통과 주문만 승인 대기로 저장
+    if (!input.riskCheck.passed || !input.riskCheck.adjustedOrder) {
+      throw new BadRequestException(
+        '승인 대기 주문 후보를 생성할 수 없습니다.',
+      );
+    }
+
+    const adjustedOrder = input.riskCheck.adjustedOrder;
+
+    // 사용자가 나중에 승인/거절할 주문 후보 저장
+    return this.approvalRepository.save(
+      this.approvalRepository.create({
+        userId: input.strategy.userId,
+        strategyId: input.strategy.id,
+        strategyRunId: input.strategyRunId,
+        strategyMode: input.strategy.strategyMode,
+        market: input.strategy.market,
+        decision: adjustedOrder.decision,
+        orderType: adjustedOrder.orderType,
+        decisionReason: input.aiDecision.reason,
+        adjustedOrder,
+        riskCheckResult: input.riskCheck,
+        orderResult: null,
+        status: StrategyOrderApprovalStatus.PENDING,
+        rejectReason: null,
+        decidedAt: null,
+      }),
+    );
+  }
+
+  // 승인 거절
+  async reject(input: {
+    userId: number;
+    approvalId: number;
+    reason?: string;
+  }): Promise<StrategyOrderApprovalEntity> {
+    // pending 상태일 때만 rejected로 변경
+    const rejectResult = await this.approvalRepository.update(
+      {
+        id: input.approvalId,
+        userId: input.userId,
+        status: StrategyOrderApprovalStatus.PENDING,
+      },
+      {
+        status: StrategyOrderApprovalStatus.REJECTED,
+        rejectReason: input.reason ?? null,
+        decidedAt: new Date(),
+      },
+    );
+
+    if (rejectResult.affected !== 1) {
+      throw new BadRequestException(
+        '이미 처리되었거나 거절할 수 없는 주문 후보입니다.',
+      );
+    }
+
+    const approval = await this.approvalRepository.findOneBy({
+      id: input.approvalId,
+      userId: input.userId,
+    });
+
+    if (!approval) {
+      throw new NotFoundException('주문 후보가 존재하지 않습니다.');
+    }
+
+    return approval;
+  }
+
+  // 승인 진행
+  async approve(input: {
+    userId: number;
+    approvalId: number;
+  }): Promise<StrategyOrderApprovalEntity> {
+    // 같은 approval을 동시에 승인하지 못하도록 pending 상태를 먼저 선점 진행
+    const claimResult = await this.approvalRepository.update(
+      {
+        id: input.approvalId,
+        userId: input.userId,
+        status: StrategyOrderApprovalStatus.PENDING,
+      },
+      {
+        status: StrategyOrderApprovalStatus.APPROVED,
+        decidedAt: new Date(),
+      },
+    );
+
+    if (claimResult.affected !== 1) {
+      throw new BadRequestException(
+        '이미 처리되었거나 승인할 수 없는 주문 후보입니다.',
+      );
+    }
+
+    // 선점한 approval을 다시 조회해서 주문 실행에 필요한 데이터를 가져옴
+    const approval = await this.approvalRepository.findOneBy({
+      id: input.approvalId,
+      userId: input.userId,
+    });
+
+    if (!approval) {
+      throw new NotFoundException('주문 후보가 존재하지 않습니다.');
+    }
+
+    // 승인 시점에 paper/live 주문 서비스 호출
+    const orderResult =
+      approval.strategyMode === StrategyMode.PAPER
+        ? await this.paperOrderService.execute({
+            userId: approval.userId,
+            market: approval.market,
+            riskCheck: approval.riskCheckResult,
+          })
+        : await this.liveOrderService.execute({
+            userId: approval.userId,
+            market: approval.market,
+            riskCheck: approval.riskCheckResult,
+          });
+
+    // 주문 결과를 approval에 저장해서 나중에 대시보드 및 로그에서 확인 가능하게끔
+    approval.orderResult = orderResult;
+    approval.status =
+      orderResult.status === 'created'
+        ? StrategyOrderApprovalStatus.EXECUTED
+        : StrategyOrderApprovalStatus.FAILED;
+    approval.decidedAt = new Date();
+
+    return this.approvalRepository.save(approval);
+  }
+}

@@ -12,6 +12,7 @@ import { UpbitPublicService } from '@/upbit/services/upbit.public.service';
 import { UpbitPrivateService } from '@/upbit/services/upbit.private.service';
 import { AssetSummaryService } from '@/data-collect/services/asset-summary.service';
 import { PaperPortfolioService } from '@/paper-trading/services/paper-portfolio.service';
+import { StrategyOrderApprovalService } from './strategy-order-approval.service';
 
 import { createNewsQuery } from '@/data-collect/utils/create-query';
 import { toUpbitMinuteUnit } from '@/upbit/types/public/upbit-minute-unit.type';
@@ -23,6 +24,7 @@ import {
 } from '../types/strategy-run-result.type';
 import { StrategyMode } from '../enums/strategy-mode.enum';
 import { RiskCheckResult } from '../types/risk-check-result.type';
+import { AiDecisionResult } from '../types/ai-decision-result.type';
 import { StructuredStrategy } from '../types/structured-strategy.type';
 import { StrategyJudgmentMode } from '../enums/strategy-judgment-mode.enum';
 
@@ -30,6 +32,7 @@ import { StrategyJudgmentMode } from '../enums/strategy-judgment-mode.enum';
 export class StrategyExecutionService {
   constructor(
     private readonly newsDataService: NewsDataService,
+    private readonly approvalService: StrategyOrderApprovalService,
     private readonly upbitAuthService: UpbitAuthService,
     private readonly riskCheckService: RiskCheckService,
     private readonly liveOrderService: LiveOrderService,
@@ -41,7 +44,12 @@ export class StrategyExecutionService {
     private readonly paperPortfolioService: PaperPortfolioService,
   ) {}
 
-  async execute(strategy: StrategyEntity): Promise<StrategyRunResult> {
+  async execute(input: {
+    strategy: StrategyEntity;
+    strategyRunId: number;
+  }): Promise<StrategyRunResult> {
+    const { strategy, strategyRunId } = input;
+
     const structuredStrategy = strategy.structuredStrategy;
 
     if (!isStructuredStrategy(structuredStrategy)) {
@@ -88,7 +96,12 @@ export class StrategyExecutionService {
       output: riskCheck,
     };
 
-    const orderStep = await this.decideOrder({ strategy, riskCheck });
+    const orderStep = await this.decideOrder({
+      strategy,
+      strategyRunId,
+      aiDecision,
+      riskCheck,
+    });
 
     return {
       decision: aiDecision.decision,
@@ -258,6 +271,8 @@ export class StrategyExecutionService {
   // 결정 단계 생성
   private async decideOrder(input: {
     strategy: StrategyEntity;
+    strategyRunId: number;
+    aiDecision: AiDecisionResult;
     riskCheck: RiskCheckResult;
   }): Promise<StrategyRunStepResult> {
     const { strategy, riskCheck } = input;
@@ -275,12 +290,21 @@ export class StrategyExecutionService {
     }
 
     if (strategy.strategyJudgmentMode === StrategyJudgmentMode.USER) {
+      const approval = await this.approvalService.createPending({
+        strategy,
+        strategyRunId: input.strategyRunId,
+        aiDecision: input.aiDecision,
+        riskCheck,
+      });
+
       return {
         name: 'order',
         status: 'skipped',
-        summary: '사용자 확인 모드이므로 자동 주문을 생성하지 않았습니다.',
+        summary:
+          '사용자 확인 모드이므로 주문 후보를 승인 대기 상태로 저장했습니다.',
         output: {
           approvalRequired: true,
+          approvalId: approval.id,
           adjustedOrder: riskCheck.adjustedOrder,
         },
       };

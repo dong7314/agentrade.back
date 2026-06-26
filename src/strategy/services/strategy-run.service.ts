@@ -122,7 +122,10 @@ export class StrategyRunService {
     );
 
     try {
-      const result = await this.strategyExecutionService.execute(strategy);
+      const result = await this.strategyExecutionService.execute({
+        strategy,
+        strategyRunId: strategyRun.id,
+      });
 
       if (!isStrategyRunResult(result)) {
         throw new BadRequestException(
