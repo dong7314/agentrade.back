@@ -14,6 +14,10 @@ import { StrategyEntity } from './strategy.entity';
 import { StrategyRunStatus } from '../enums/strategy-run-status.enum';
 import { StrategyRunResult } from '../types/strategy-run-result.type';
 
+@Index('UQ_strategy_runs_one_running_per_strategy', ['strategyId'], {
+  unique: true,
+  where: `"status" = 'running'`,
+})
 @Index('IDX_strategy_runs_strategy_id', ['strategyId'])
 @Index('IDX_strategy_runs_user_id', ['userId'])
 @Index('IDX_strategy_runs_status', ['status'])

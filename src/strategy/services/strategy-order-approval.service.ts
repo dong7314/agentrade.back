@@ -20,6 +20,7 @@ import { PaginatedResult } from '@/common/types/paginated.type';
 import { AiDecisionResult } from '../types/ai-decision-result.type';
 import { StrategyOrderApprovalStatus } from '../enums/strategy-order-approval-status.enum';
 import { FindStrategyOrderApprovalQueryDto } from '../dto/find-strategy-order-approval.query.dto';
+import type { TradeOrderResult } from '../types/trade-order-result.type';
 
 @Injectable()
 export class StrategyOrderApprovalService {
@@ -182,28 +183,88 @@ export class StrategyOrderApprovalService {
       throw new NotFoundException('주문 후보가 존재하지 않습니다.');
     }
 
-    // 승인 시점에 paper/live 주문 서비스 호출
-    const orderResult =
-      approval.strategyMode === StrategyMode.PAPER
-        ? await this.paperOrderService.execute({
-            userId: approval.userId,
-            market: approval.market,
-            riskCheck: approval.riskCheckResult,
-          })
-        : await this.liveOrderService.execute({
-            userId: approval.userId,
-            market: approval.market,
-            riskCheck: approval.riskCheckResult,
-          });
+    try {
+      // 승인 시점에 paper/live 주문 서비스 호출
+      const orderResult = await this.executeOrder(approval);
 
-    // 주문 결과를 approval에 저장해서 나중에 대시보드 및 로그에서 확인 가능하게끔
-    approval.orderResult = orderResult;
-    approval.status =
-      orderResult.status === 'created'
-        ? StrategyOrderApprovalStatus.EXECUTED
-        : StrategyOrderApprovalStatus.FAILED;
-    approval.decidedAt = new Date();
+      // 주문 결과를 approval에 저장해서 나중에 대시보드 및 로그에서 확인 가능하게끔
+      approval.orderResult = orderResult;
+      approval.status = this.resolveStatusAfterOrder({
+        approval,
+        orderResult,
+      });
+      approval.decidedAt = new Date();
 
-    return this.approvalRepository.save(approval);
+      return this.approvalRepository.save(approval);
+    } catch (error) {
+      // 주문 처리 중 예외가 발생해도 approval을 failed 상태로 남김
+      approval.orderResult = this.createFailedOrderResult({
+        approval,
+        error,
+      });
+      approval.status = StrategyOrderApprovalStatus.FAILED;
+      approval.decidedAt = new Date();
+
+      return this.approvalRepository.save(approval);
+    }
+  }
+
+  private async executeOrder(
+    approval: StrategyOrderApprovalEntity,
+  ): Promise<TradeOrderResult> {
+    if (approval.strategyMode === StrategyMode.PAPER) {
+      return this.paperOrderService.execute({
+        userId: approval.userId,
+        market: approval.market,
+        riskCheck: approval.riskCheckResult,
+      });
+    }
+
+    return this.liveOrderService.execute({
+      userId: approval.userId,
+      market: approval.market,
+      riskCheck: approval.riskCheckResult,
+    });
+  }
+
+  private resolveStatusAfterOrder(input: {
+    approval: StrategyOrderApprovalEntity;
+    orderResult: TradeOrderResult;
+  }): StrategyOrderApprovalStatus {
+    if (input.orderResult.status !== 'created') {
+      return StrategyOrderApprovalStatus.FAILED;
+    }
+
+    // paper 주문은 내부 잔고 반영까지 끝난 상태이므로 executed로 볼 수 있음
+    if (input.approval.strategyMode === StrategyMode.PAPER) {
+      return StrategyOrderApprovalStatus.EXECUTED;
+    }
+
+    // live 주문은 Upbit에 주문이 접수된 상태라 체결 완료로 보지 않음
+    return StrategyOrderApprovalStatus.APPROVED;
+  }
+
+  private createFailedOrderResult(input: {
+    approval: StrategyOrderApprovalEntity;
+    error: unknown;
+  }): TradeOrderResult {
+    const adjustedOrder = input.approval.adjustedOrder;
+
+    return {
+      mode:
+        input.approval.strategyMode === StrategyMode.PAPER ? 'paper' : 'live',
+      market: input.approval.market,
+      decision: input.approval.decision,
+      orderType: input.approval.orderType,
+      amountKrw: adjustedOrder.estimatedOrderAmountKrw,
+      volume: adjustedOrder.estimatedVolume,
+      priceKrw: adjustedOrder.priceKrw,
+      status: 'failed',
+      externalOrderId: null,
+      reason:
+        input.error instanceof Error
+          ? `주문 실행 중 오류가 발생했습니다. ${input.error.message}`
+          : '주문 실행 중 알 수 없는 오류가 발생했습니다.',
+    };
   }
 }

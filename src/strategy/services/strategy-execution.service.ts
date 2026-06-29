@@ -220,22 +220,37 @@ export class StrategyExecutionService {
     }
 
     const query = createNewsQuery(structuredStrategy);
-    const articles = await this.newsDataService.search({
-      query,
-      display: 5,
-    });
 
-    return {
-      name: 'news',
-      status: 'succeeded',
-      summary: `${query} 관련 뉴스 ${articles.length}개를 조회했습니다.`,
-      output: {
-        enabled: true,
+    try {
+      // 외부 뉴스 API 실패가 run 전체 실패로 번지지 않게 step 실패로 저장
+      const articles = await this.newsDataService.search({
         query,
-        fetchedAt: new Date(),
-        articles,
-      },
-    };
+        display: 5,
+      });
+
+      return {
+        name: 'news',
+        status: 'succeeded',
+        summary: `${query} 관련 뉴스 ${articles.length}개를 조회했습니다.`,
+        output: {
+          enabled: true,
+          query,
+          fetchedAt: new Date(),
+          articles,
+        },
+      };
+    } catch (error) {
+      return {
+        name: 'news',
+        status: 'failed',
+        summary: `${query} 뉴스 수집에 실패했습니다.`,
+        output: {
+          enabled: true,
+          query,
+          reason: error instanceof Error ? error.message : 'unknown error',
+        },
+      };
+    }
   }
 
   // 마켓 요약 정보 크롤링 수집

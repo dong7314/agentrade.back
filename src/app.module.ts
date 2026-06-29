@@ -13,6 +13,7 @@ import { AuthModule } from './auth/auth.module';
 import { UserModule } from './user/user.module';
 import { StrategyModule } from './strategy/strategy.module';
 import { ScheduleModule } from '@nestjs/schedule';
+import { DashboardModule } from './dashboard/dashboard.module';
 
 @Module({
   imports: [
@@ -39,6 +40,7 @@ import { ScheduleModule } from '@nestjs/schedule';
     AuthModule,
     UserModule,
     StrategyModule,
+    DashboardModule,
   ],
   controllers: [AppController],
   providers: [AppService],

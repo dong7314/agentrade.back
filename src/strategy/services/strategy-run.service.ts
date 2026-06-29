@@ -15,6 +15,7 @@ import { calculateNextRunAt } from '../utils/calculate-next-run-at';
 import { isStrategyRunResult } from '../validators/strategy-run-result.validator';
 import { isStructuredStrategy } from '../validators/structured-strategy.validator';
 import { createPaginationMeta } from '@/common/utils/create-pagination-meta';
+import { isUniqueViolation } from '@/database/utils/is-unique-violation';
 
 import { StrategyStatus } from '../enums/strategy-status.enum';
 import { PaginatedResult } from '@/common/types/paginated.type';
@@ -109,17 +110,28 @@ export class StrategyRunService {
 
     const now = new Date();
 
-    const strategyRun = await this.strategyRunRepository.save(
-      this.strategyRunRepository.create({
-        strategyId: strategy.id,
-        userId: strategy.userId,
-        status: StrategyRunStatus.RUNNING,
-        startedAt: now,
-        result: null,
-        errorMessage: null,
-        finishedAt: null,
-      }),
-    );
+    let strategyRun: StrategyRunEntity;
+
+    try {
+      // 동시에 실행 요청이 들어와도 DB unique index가 마지막 방어선을 담당
+      strategyRun = await this.strategyRunRepository.save(
+        this.strategyRunRepository.create({
+          strategyId: strategy.id,
+          userId: strategy.userId,
+          status: StrategyRunStatus.RUNNING,
+          startedAt: now,
+          result: null,
+          errorMessage: null,
+          finishedAt: null,
+        }),
+      );
+    } catch (error) {
+      if (isUniqueViolation(error)) {
+        throw new BadRequestException('이미 실행 중인 전략입니다.');
+      }
+
+      throw error;
+    }
 
     try {
       const result = await this.strategyExecutionService.execute({
