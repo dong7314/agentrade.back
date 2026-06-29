@@ -1,4 +1,4 @@
-import { LessThanOrEqual, Repository } from 'typeorm';
+import { Repository } from 'typeorm';
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 
@@ -7,6 +7,7 @@ import { StrategyRunService } from './strategy-run.service';
 import { StrategyEntity } from '../entities/strategy.entity';
 import { Cron } from '@nestjs/schedule';
 import { StrategyStatus } from '../enums/strategy-status.enum';
+import { StrategyRunStatus } from '../enums/strategy-run-status.enum';
 
 @Injectable()
 export class StrategySchedulerService {
@@ -18,14 +19,26 @@ export class StrategySchedulerService {
 
   @Cron('*/1 * * * *')
   async handleStrategyRuns() {
-    // 1분마다 실행 대상 전략 조회
-    const strategies = await this.strategyRepository.find({
-      where: {
+    const now = new Date();
+
+    // running run이 없는 전략만 실행 대상으로 조회
+    const strategies = await this.strategyRepository
+      .createQueryBuilder('strategy')
+      .where('strategy.strategyStatus = :strategyStatus', {
         strategyStatus: StrategyStatus.ACTIVE,
-        enabled: true,
-        nextRunAt: LessThanOrEqual(new Date()),
-      },
-    });
+      })
+      .andWhere('strategy.enabled = :enabled', { enabled: true })
+      .andWhere('strategy.nextRunAt <= :now', { now })
+      .andWhere(
+        `NOT EXISTS (
+        SELECT 1
+        FROM strategy_runs run
+        WHERE run.strategy_id = strategy.id
+          AND run.status = :runningStatus
+      )`,
+        { runningStatus: StrategyRunStatus.RUNNING },
+      )
+      .getMany();
 
     for (const strategy of strategies) {
       try {

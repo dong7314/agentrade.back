@@ -1,10 +1,105 @@
 # Agentrade Backend Plan
 
-최종 업데이트: 2026-06-26
+최종 업데이트: 2026-06-29
 
 이 문서는 `backend` 폴더에서 현재까지 어디까지 개발했는지, 이번 세션에서 어떤 방식으로 학습/개발을 진행했는지, 다른 컴퓨터에서 이어서 작업할 때 무엇부터 확인하면 되는지 정리한 인수인계 문서입니다.
 
-현재 백엔드는 NestJS + TypeORM + PostgreSQL + Scalar 기반으로 로컬 회원가입/로그인, 쿠키 기반 access/refresh token, DB 세션, Naver/Kakao OAuth 로그인, 전략 생성/목록/상세/수정/상태 변경/LLM 구조화 흐름까지 1차 구현된 상태입니다. 또한 `strategy_runs` 기반 실행 이력 저장/조회, `POST /strategies/:id/run` 수동 실행 API, `@nestjs/schedule` 기반 자동 실행 흐름, 실제 Upbit 캔들 수집, 사용자별 Upbit credential 암호화 저장, live portfolio 조회, paper portfolio 조회 분기, Naver 뉴스 수집, Upbit DataLab 자산 요약 수집, 전략별 데이터 접근 권한, 전략 판단 모드 설정, LLM 기반 AI decision, risk check, paper order, live order 1차 실행 흐름, 사용자 승인/거절 기반 주문 승인 대기 흐름까지 진행된 상태입니다.
+현재 백엔드는 NestJS + TypeORM + PostgreSQL + Scalar 기반으로 로컬 회원가입/로그인, 쿠키 기반 access/refresh token, DB 세션, Naver/Kakao OAuth 로그인, 전략 생성/목록/상세/수정/상태 변경/LLM 구조화 흐름까지 1차 구현된 상태입니다. 또한 `strategy_runs` 기반 실행 이력 저장/조회, `POST /strategies/:id/run` 수동 실행 API, `@nestjs/schedule` 기반 자동 실행 흐름, 실제 Upbit 캔들 수집, 사용자별 Upbit credential 암호화 저장, live portfolio 조회, paper portfolio 조회 분기, Naver 뉴스 수집, Upbit DataLab 자산 요약 수집, 전략별 데이터 접근 권한, 전략 판단 모드 설정, LLM 기반 AI decision, risk check, paper order, live order 1차 실행 흐름, 사용자 승인/거절 기반 주문 승인 대기 흐름, 대시보드 1차 조회 API, 전략 실행 중복 방지 보강까지 진행된 상태입니다.
+
+2026-06-29 현재 중요한 진행 상태:
+
+- `src/dashboard` 모듈을 추가하고 `AppModule`에 등록했습니다.
+- dashboard DTO는 `dto/query`, `dto/response`로 나누어 요청 query DTO와 응답 DTO의 역할을 분리했습니다.
+- `GET /dashboard/portfolio?mode=paper|live&market=KRW-BTC` API를 추가했습니다.
+- portfolio API는 `mode=paper`일 때 `PaperPortfolioService.getPortfolio()`를 사용하고, `mode=live`일 때 사용자 Upbit credential 복호화 후 실제 Upbit 계좌와 현재가를 조회해 평가금액, 미실현 손익, 비중을 계산합니다.
+- `GET /dashboard/strategies/:strategyId/latest-run` API를 추가했습니다.
+- latest-run API는 로그인 사용자의 특정 전략 최신 `strategy_runs` row를 조회하고, 연결된 `strategy_order_approvals`가 있으면 `approvalId`, `approvalStatus`를 함께 반환합니다.
+- `GET /dashboard/chart?market=KRW-BTC&timeframe=5m&count=50` API를 추가했습니다.
+- chart API는 `UpbitPublicService.getMinuteCandles()`를 사용하고, 차트 UI에서 쓰기 좋도록 오래된 캔들에서 최신 캔들 순서로 정렬해 반환합니다.
+- `GET /dashboard/market-summaries?markets=KRW-BTC,KRW-ETH,KRW-XRP` API를 추가했습니다.
+- market summaries API는 `UpbitPublicService.getTickers()`를 사용해 여러 마켓의 현재가, 24시간 등락률, 고가/저가, 거래량, 거래대금을 반환합니다.
+- 기본 dashboard market 목록은 `DASHBOARD_MARKETS`로 분리했습니다.
+- `GET /dashboard/trade-logs?page=1&limit=20` API를 추가했습니다.
+- trade logs API는 현재 단계에서 `strategy_order_approvals`를 1차 소스로 사용해 주문 후보, 승인, 실행 결과 로그를 대시보드 표시용으로 반환합니다.
+- trade log item 변환은 service가 아니라 `DashboardTradeLogItemDto.fromApproval()`, `fromApprovals()`에서 담당하도록 분리했습니다.
+- dashboard API 문서는 `src/dashboard/docs/dashboard-api.docs.ts`에 모아 Scalar에서 확인할 수 있도록 연결했습니다.
+- `strategy_runs`에 같은 전략의 `running` 실행 이력이 중복 생성되지 않도록 partial unique index migration `1782700000000-AddOneRunningRunPerStrategy.ts`를 추가했습니다.
+- `StrategyRunService`는 `running` row 저장 시 unique violation이 발생하면 `이미 실행 중인 전략입니다.`로 변환합니다.
+- AI 판단이나 외부 API 호출이 길어지는 동안 scheduler가 같은 전략을 다시 실행해 400 로그를 반복해서 남기지 않도록 `StrategySchedulerService`에서 `running` run이 존재하는 전략은 조회 단계에서 제외하도록 변경했습니다.
+- `StrategyRunService.assertNoRunningRun()`은 수동 실행, 다중 scheduler 인스턴스, DB unique index 전 마지막 안전장치로 유지합니다.
+- `StrategyOrderApprovalService.approve()`는 주문 실행 중 예외가 발생해도 approval을 `failed`로 저장하도록 보강했습니다.
+- paper 주문은 내부 잔고 반영까지 끝난 경우 `executed`로 저장하고, live 주문은 Upbit 주문 접수 상태이므로 즉시 `executed`로 보지 않고 `approved` 상태로 남기도록 변경했습니다.
+- `StrategyExecutionService.collectNews()`는 Naver News API 실패 시 run 전체를 실패시키지 않고 `news` step만 `failed`로 저장하도록 변경했습니다.
+- `pnpm format`을 통해 기존 TypeORM migration 파일들의 Prettier 포맷도 정리되었습니다.
+- 기존 사용자에게 `paper_accounts` row가 없으면 paper 전략의 portfolio step에서 `현재 가상 계좌가 존재하지 않습니다.`가 발생할 수 있음을 확인했습니다. 운영/개발 DB에서는 기존 사용자 backfill이 필요합니다.
+
+2026-06-29 기준 주요 dashboard API:
+
+```http
+GET /dashboard/portfolio?mode=paper
+GET /dashboard/portfolio?mode=live
+GET /dashboard/strategies/:strategyId/latest-run
+GET /dashboard/chart?market=KRW-BTC&timeframe=5m&count=50
+GET /dashboard/market-summaries?markets=KRW-BTC,KRW-ETH,KRW-XRP
+GET /dashboard/trade-logs?page=1&limit=20
+```
+
+2026-06-29 기준 확인한 이슈와 대응:
+
+- AI decision이 오래 걸리는 동안 1분 scheduler가 같은 전략을 다시 잡아 `이미 실행 중인 전략입니다.` 로그가 반복될 수 있었습니다.
+- 이 문제는 scheduler 조회 시 `NOT EXISTS (running run)` 조건을 추가해 running 중인 전략을 실행 후보에서 제외하는 방식으로 보강했습니다.
+- `paper_accounts`가 없는 기존 사용자는 paper portfolio 조회가 실패할 수 있으므로 아래 backfill SQL을 먼저 적용할 수 있습니다.
+
+```sql
+INSERT INTO paper_accounts (
+  user_id,
+  base_currency,
+  cash_balance,
+  initial_cash_balance
+)
+SELECT
+  u.id,
+  'KRW',
+  10000000,
+  10000000
+FROM users u
+WHERE NOT EXISTS (
+  SELECT 1
+  FROM paper_accounts pa
+  WHERE pa.user_id = u.id
+);
+```
+
+- 오래 남은 `running` run은 원인을 확인한 뒤 필요하면 아래처럼 수동 종료할 수 있습니다.
+
+```sql
+UPDATE strategy_runs
+SET status = 'failed',
+    finished_at = now(),
+    error_message = 'stale running run manually closed'
+WHERE status = 'running';
+```
+
+2026-06-29 기준 검증:
+
+```bash
+./node_modules/.bin/tsc --noEmit --project tsconfig.build.json --pretty false
+./node_modules/.bin/eslint "src/dashboard/**/*.ts"
+./node_modules/.bin/eslint "src/**/*.ts"
+```
+
+- dashboard 범위와 전체 `src/**/*.ts` lint는 통과했습니다.
+- `tsc --noEmit --project tsconfig.build.json` 기준 타입 검증도 통과했습니다.
+
+다음 작업 방향:
+
+- 현재 변경 범위가 크므로 `plan.md` 업데이트 후 한 번 커밋하는 것이 좋습니다.
+- 커밋 전 DB에 새 migration 적용 여부를 확인합니다. 필요하면 `pnpm --config.verify-deps-before-run=false migration:run`을 실행합니다.
+- 기존 사용자 `paper_accounts` backfill을 적용합니다.
+- 다음 보강 작업은 `paper` 전략 실행 전 paper account를 보장하는 코드 추가입니다.
+- 그 다음 `NewsDataService`, `AssetSummaryService`의 외부 fetch timeout을 추가합니다.
+- 이후 live 주문 체결 상태 조회/동기화 기능을 추가합니다. Upbit 주문 uuid를 기준으로 주문 상태를 다시 조회해 live 주문이 실제 체결되었는지 확인하는 흐름이 필요합니다.
+- dashboard 1차 API 이후에는 frontend 실제 연동, 주문/승인/audit log 정교화, LangGraph 전환 순서로 확장합니다.
 
 2026-06-26 현재 중요한 진행 상태:
 
