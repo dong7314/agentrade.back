@@ -113,15 +113,128 @@ WHERE status = 'running';
 - dashboard 범위와 전체 `src/**/*.ts` lint는 통과했습니다.
 - `tsc --noEmit --project tsconfig.build.json` 기준 타입 검증도 통과했습니다.
 
+2026-06-29 기준 LangGraph 전환 방향:
+
+- 이제 백엔드의 전략 실행 흐름은 LangGraph 1차 전환을 시작할 수 있는 상태입니다.
+- LangGraph를 붙이는 이유는 단순히 AI 호출이 있기 때문이 아니라, 이후 `risk check 실패 시 AI decision 재시도`, `필수 데이터 누락 시 collect 단계 재시도`, `hold일 때 주문 없이 종료`, `user judgment mode일 때 approval 생성 후 종료`처럼 조건부 분기와 재진입 흐름이 필요해지기 때문입니다.
+- 1차 전환에서는 기존 `StrategyExecutionService.execute()`의 선형 흐름을 그대로 LangGraph node로 옮기는 것을 목표로 합니다.
+- 1차 전환에서는 retry/loop를 최소화하고, 현재 동작 결과가 바뀌지 않도록 `prepare -> collect -> decide -> risk -> order -> finish` 흐름을 우선 구성합니다.
+- 2차 전환에서 retryable risk violation, 필수 데이터 누락, AI decision 재요청 같은 loop/conditional edge를 추가합니다.
+- 전략 pause/archive/delete 시 live 미체결 주문 정리는 중요한 운영 안전장치이지만, 현재 LangGraph 전환을 막는 선행 작업은 아닙니다. 이 작업은 LangGraph 1차 전환 이후 차후 보강 항목으로 둡니다.
+
+LangGraph 1차 전환 목표 구조:
+
+```txt
+StrategyRunService.runByStrategy()
+-> StrategyExecutionService.execute()
+-> StrategyExecutionGraph.run()
+-> prepareNode
+-> collectMarketDataNode
+-> collectNewsNode
+-> collectAssetSummaryNode
+-> collectPortfolioNode
+-> aiDecisionNode
+-> riskCheckNode
+-> orderNode
+-> finish
+```
+
+LangGraph 1차 전환에서 먼저 만들 타입:
+
+```ts
+StrategyGraphState = {
+  strategy;
+  strategyRunId;
+  steps;
+  collectedData;
+  aiDecision;
+  riskCheck;
+  orderResult;
+}
+```
+
+LangGraph 1차 전환 원칙:
+
+- 기존 service들을 버리지 않고 node 내부에서 재사용합니다.
+- `StrategyExecutionService.execute()`의 외부 응답 형태인 `StrategyRunResult`는 유지합니다.
+- `StrategyRunService`, scheduler, approval, paper/live order API의 public 흐름은 바꾸지 않습니다.
+- node 분리는 학습과 이후 loop 확장을 위한 구조 작업으로 진행합니다.
+- 처음부터 완전한 agent graph를 만들지 않고, 현재 선형 workflow를 graph로 옮기는 수준에서 시작합니다.
+
+2026-06-29 기준 `example/agentrade/frontend` 목업 분석:
+
+- 프론트 목업은 `example/agentrade/frontend` 아래의 Next.js 프로젝트입니다.
+- 현재 프론트는 API 호출 없이 `src/data/dashboard.ts`의 mock 데이터를 사용합니다.
+- 핵심 화면은 `TradeDashboard`, `ExecutionStatusScreen`, `StrategyBuilderScreen`, `HistoryScreen`, `SettingsScreen`, `PortfolioScreen`입니다.
+- 홈 대시보드는 현재 백엔드의 dashboard API로 1차 연결이 가능합니다.
+- `MarketSummary`는 `GET /dashboard/market-summaries`로 연결할 수 있습니다.
+- `ChartPanel`은 `GET /dashboard/chart`로 연결할 수 있습니다.
+- `AiDecisionPanel`, `RiskPanel`, `WorkflowPanel`은 `GET /dashboard/strategies/:strategyId/latest-run`으로 1차 연결할 수 있습니다.
+- `PortfolioPanel`은 `GET /dashboard/portfolio?mode=paper|live`로 연결할 수 있습니다.
+- `TradeLogPanel`은 `GET /dashboard/trade-logs`로 연결할 수 있습니다.
+- 승인 대기, 승인, 거절, live 주문 sync는 `GET /strategy-order-approvals`, `POST /strategy-order-approvals/:id/approve`, `POST /strategy-order-approvals/:id/reject`, `POST /strategy-order-approvals/:id/sync-live-order`로 연결할 수 있습니다.
+
+프론트 목업 기준 LangGraph 이후 보강할 API:
+
+- `GET /strategy-runs/:runId/graph`
+  - `ExecutionStatusScreen`의 graph node/edge UI를 실제 실행 상태와 연결하기 위한 API입니다.
+  - 응답은 `nodes`, `edges`, `run status`, `startedAt`, `finishedAt` 중심으로 설계합니다.
+  - 1차에서는 polling으로 충분하며, SSE/WebSocket은 나중에 필요할 때 추가합니다.
+- `GET /strategy-runs/:runId/events`
+  - 실행 화면의 "실시간 이벤트" 패널을 위한 API입니다.
+  - LangGraph 1차 전환 직후에는 필수는 아니며, `strategy_runs.result.steps` 기반으로 만들 수 있습니다.
+  - 실시간성이 필요해지면 `GET /strategy-runs/:runId/events/stream` 같은 SSE로 확장합니다.
+- `GET /upbit/markets?quote=KRW`
+  - `StrategyBuilderScreen`의 마켓 선택 UI를 실제 Upbit 마켓 목록과 연결하기 위한 API입니다.
+  - 응답은 `{ market, symbol, koreanName, englishName }` 형태가 좋습니다.
+- `GET /dashboard/trade-logs` query 보강
+  - 현재는 `page`, `limit`만 지원합니다.
+  - `HistoryScreen`과 trade log 검색/필터를 위해 `strategyId`, `market`, `status`, `mode`, `dateFrom`, `dateTo`, `search`, `sort`를 차후 추가합니다.
+- `GET /strategy-runs` query 보강
+  - 현재는 `strategyId`, `status` 중심입니다.
+  - history 화면을 위해 `market`, `dateFrom`, `dateTo`, `sort`를 차후 추가할 수 있습니다.
+- `GET /strategy-order-approvals` query 보강
+  - 현재는 `status` 중심입니다.
+  - 승인 내역 화면을 위해 `strategyId`, `market`, `mode`, `dateFrom`, `dateTo`를 차후 추가할 수 있습니다.
+- `POST /strategies/parse-preview`
+  - 프론트가 "저장 전 AI 구조화 미리보기"를 원할 때 필요한 API입니다.
+  - 현재는 `POST /strategies`로 draft 생성 후 `POST /strategies/:id/parse`를 호출하는 흐름으로 충분하므로 우선순위는 낮습니다.
+- `GET /admin/users`, `PATCH /admin/users/:id/permissions`
+  - `SettingsScreen`의 사용자 권한 승격 UI를 위한 API입니다.
+  - 현재 프로젝트 핵심은 개인 전략 실행/학습 흐름이므로 우선순위는 가장 낮습니다.
+
+프론트 연동 전에 맞춰야 할 응답/용어 차이:
+
+- 프론트 목업은 `BTC/KRW` 표기를 쓰지만, 백엔드는 Upbit 기준 `KRW-BTC`를 사용합니다. 실제 연동 시 프론트를 `KRW-BTC` 기준으로 맞춥니다.
+- 프론트 목업의 `AssetSymbol`은 `BTC | ETH | SOL`인데, 현재 백엔드 기본 대시보드 마켓은 `BTC | ETH | XRP` 흐름입니다. 실제 지원 마켓 목록은 `GET /upbit/markets?quote=KRW` 이후 UI에서 동적으로 구성합니다.
+- 프론트 chart 타입은 `time: number`를 기대하고, 백엔드는 `openedAt: Date`를 내려줍니다. 프론트 API adapter에서 `Date.parse(openedAt) / 1000`으로 변환합니다.
+- 프론트 `WorkflowStepStatus`는 `completed | active | waiting`이고, 백엔드 step status는 `succeeded | failed | skipped` 계열입니다. LangGraph graph API에서 UI용 status로 매핑합니다.
+- 프론트 `TradeLogStatus`는 `completed | pending | waiting`이고, 백엔드 approval status는 `pending | approved | rejected | executed | cancelled | failed`입니다. dashboard adapter 또는 DTO에서 화면용 status를 매핑합니다.
+- `SettingsScreen`은 관리자/권한 관리 화면이지만, 현재 백엔드 `UserController`는 비어 있습니다. 해당 화면은 마지막 단계 또는 별도 admin 기능으로 분리합니다.
+
+LangGraph 이후 백엔드 보강 순서:
+
+```txt
+1. LangGraph 1차 전환 완료
+2. GET /strategy-runs/:runId/graph 추가
+3. dashboard latest-run 응답을 graph node 상태와 맞춤
+4. GET /upbit/markets?quote=KRW 추가
+5. dashboard trade-logs / strategy-runs / approvals 필터 보강
+6. 필요하면 POST /strategies/parse-preview 추가
+7. settings/admin user API는 가장 마지막에 검토
+8. 그 다음 frontend 실제 API 연결
+```
+
 다음 작업 방향:
 
-- 현재 변경 범위가 크므로 `plan.md` 업데이트 후 한 번 커밋하는 것이 좋습니다.
-- 커밋 전 DB에 새 migration 적용 여부를 확인합니다. 현재 필요한 migration은 `1782701000000-AddCancelledStrategyOrderApprovalStatus.ts`이며 적용 명령은 `pnpm migration:run`입니다.
-- 기존 사용자에게 `paper_accounts`가 없다면 위 backfill SQL을 적용합니다.
-- Scalar에서 `POST /strategy-order-approvals/:id/sync-live-order`가 문서에 보이는지 확인합니다.
-- live 주문 테스트는 실제 자산에 영향을 줄 수 있으므로 매우 소액 또는 test order 흐름 중심으로 확인합니다.
-- live 지정가 주문을 만든 뒤 `wait` 상태일 때 다음 전략 실행 전에 `cancelOpenLiveOrdersBeforeRun()`이 기존 주문을 취소하는지 확인합니다.
-- 이후 작업은 주문/승인/audit log 정교화, frontend dashboard 실제 연동, LangGraph 전환 순서로 확장합니다.
+- 현재 변경 범위는 한 번 커밋해서 닫는 것이 좋습니다.
+- 다음 주요 작업은 LangGraph 1차 전환입니다.
+- 첫 작업은 `StrategyGraphState` 타입을 만들고, 현재 `StrategyExecutionService.execute()` 안의 단계들을 node 후보로 나누는 것입니다.
+- 그 다음 `StrategyExecutionGraph` 또는 유사한 graph 실행 service를 만들고, 기존 `StrategyExecutionService.execute()`가 해당 graph service를 호출하도록 점진적으로 전환합니다.
+- LangGraph 1차 전환이 끝나면 기존 수동 실행 API, scheduler, dashboard latest-run 응답이 그대로 동작하는지 확인합니다.
+- LangGraph 2차 전환에서 risk retry, data collect retry, AI decision 재요청 같은 조건부 edge를 추가합니다.
+- 전략 pause/archive/delete 시 live 미체결 주문 정리는 LangGraph 1차 전환 이후 차후 운영 안전장치로 진행합니다.
+- frontend dashboard 실제 연동은 백엔드 LangGraph 전환과 주요 실행 검증이 끝난 뒤 마지막 단계에서 진행합니다.
 
 2026-06-26 현재 중요한 진행 상태:
 

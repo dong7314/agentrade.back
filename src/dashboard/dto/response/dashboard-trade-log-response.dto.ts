@@ -48,6 +48,18 @@ export class DashboardTradeLogItemDto {
   @ApiPropertyOptional({ example: 'paper 매수 주문을 반영했습니다.' })
   reason!: string | null;
 
+  @ApiPropertyOptional({ enum: ['wait', 'done', 'cancel'], nullable: true })
+  liveOrderState!: 'wait' | 'done' | 'cancel' | null;
+
+  @ApiPropertyOptional({ example: 0.001, nullable: true })
+  executedVolume!: number | null;
+
+  @ApiPropertyOptional({ example: 0, nullable: true })
+  remainingVolume!: number | null;
+
+  @ApiPropertyOptional({ example: 47.5, nullable: true })
+  paidFee!: number | null;
+
   @ApiProperty()
   createdAt!: Date;
 
@@ -75,6 +87,10 @@ export class DashboardTradeLogItemDto {
       volume: orderResult?.volume ?? approval.adjustedOrder.estimatedVolume,
       priceKrw: orderResult?.priceKrw ?? approval.adjustedOrder.priceKrw,
       reason: orderResult?.reason ?? approval.decisionReason,
+      liveOrderState: orderResult?.liveOrderState ?? null,
+      executedVolume: orderResult?.executedVolume ?? null,
+      remainingVolume: orderResult?.remainingVolume ?? null,
+      paidFee: orderResult?.paidFee ?? null,
       createdAt: approval.createdAt,
       decidedAt: approval.decidedAt,
     };
