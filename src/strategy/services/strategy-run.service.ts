@@ -10,13 +10,15 @@ import { StrategyEntity } from '../entities/strategy.entity';
 import { StrategyRunEntity } from '../entities/strategy-run.entity';
 
 import { StrategyExecutionService } from './strategy-execution.service';
+import { StrategyOrderApprovalService } from './strategy-order-approval.service';
 
+import { isUniqueViolation } from '@/database/utils/is-unique-violation';
 import { calculateNextRunAt } from '../utils/calculate-next-run-at';
 import { isStrategyRunResult } from '../validators/strategy-run-result.validator';
 import { isStructuredStrategy } from '../validators/structured-strategy.validator';
 import { createPaginationMeta } from '@/common/utils/create-pagination-meta';
-import { isUniqueViolation } from '@/database/utils/is-unique-violation';
 
+import { StrategyMode } from '../enums/strategy-mode.enum';
 import { StrategyStatus } from '../enums/strategy-status.enum';
 import { PaginatedResult } from '@/common/types/paginated.type';
 import { StrategyRunStatus } from '../enums/strategy-run-status.enum';
@@ -31,6 +33,7 @@ export class StrategyRunService {
     private readonly strategyRunRepository: Repository<StrategyRunEntity>,
     private readonly dataSource: DataSource,
     private readonly strategyExecutionService: StrategyExecutionService,
+    private readonly strategyOrderApprovalService: StrategyOrderApprovalService,
   ) {}
 
   // 페이지를 통해서 전략 이력들 아이템을 가져오는 메서드
@@ -76,7 +79,7 @@ export class StrategyRunService {
     return strategyRun;
   }
 
-  // 목 데이터로 전략 이력 생성
+  // 전략 이력 생성
   async runByStrategy(input: {
     userId: number;
     strategyId: number;
@@ -134,6 +137,15 @@ export class StrategyRunService {
     }
 
     try {
+      if (strategy.strategyMode === StrategyMode.LIVE) {
+        // 새 AI 판단 전에 이전 live 미체결 주문을 먼저 정리
+        await this.strategyOrderApprovalService.cancelOpenLiveOrdersBeforeRun({
+          userId: strategy.userId,
+          strategyId: strategy.id,
+          market: strategy.market,
+        });
+      }
+
       const result = await this.strategyExecutionService.execute({
         strategy,
         strategyRunId: strategyRun.id,

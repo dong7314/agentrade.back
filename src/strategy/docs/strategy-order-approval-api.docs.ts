@@ -197,3 +197,58 @@ export function ApiRejectStrategyOrderApproval() {
     }),
   );
 }
+
+export function ApiSyncLiveOrderApproval() {
+  return applyDecorators(
+    ApiCookieAuth('access_token'),
+    ApiOperation({
+      summary: 'live 주문 상태 동기화',
+      description:
+        '승인 후 생성된 live Upbit 주문의 현재 상태를 조회하고, approval의 orderResult와 status를 최신 상태로 갱신합니다.',
+    }),
+    ApiParam({
+      name: 'id',
+      example: 1,
+      description: '동기화할 live 주문 approval ID입니다.',
+    }),
+    ApiOkResponse({
+      description: 'live 주문 상태 동기화 성공',
+      schema: {
+        example: {
+          ...strategyOrderApprovalExample,
+          strategyMode: StrategyMode.LIVE,
+          orderResult: {
+            mode: 'live',
+            market: 'KRW-BTC',
+            decision: 'buy',
+            orderType: 'limit',
+            amountKrw: 95000,
+            volume: 0.001,
+            priceKrw: 95000000,
+            status: 'created',
+            externalOrderId: '7c0f8f6a-1111-2222-3333-66f1b8e5a123',
+            reason: 'Upbit 주문 상태를 동기화했습니다. state=done',
+            liveOrderState: 'done',
+            executedVolume: 0.001,
+            remainingVolume: 0,
+            paidFee: 47.5,
+          },
+          status: StrategyOrderApprovalStatus.EXECUTED,
+          decidedAt: '2026-06-26T01:03:00.000Z',
+          updatedAt: '2026-06-26T01:03:00.000Z',
+        },
+      },
+    }),
+    ApiBadRequestResponse({
+      description:
+        'live 주문이 아니거나, 동기화할 Upbit 주문 uuid가 없는 approval입니다.',
+    }),
+    ApiUnauthorizedResponse({
+      description: 'access_token 쿠키가 없거나 유효하지 않습니다.',
+    }),
+    ApiNotFoundResponse({
+      description:
+        'approval이 존재하지 않거나 현재 사용자의 approval이 아닙니다.',
+    }),
+  );
+}

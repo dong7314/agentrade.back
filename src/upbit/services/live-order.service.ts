@@ -5,6 +5,7 @@ import { UpbitPrivateService } from '@/upbit/services/upbit.private.service';
 
 import { RiskCheckResult } from '../../strategy/types/risk-check-result.type';
 import { TradeOrderResult } from '../../strategy/types/trade-order-result.type';
+import { UpbitOrderDetail } from '../types/private/upbit-order-detail.type';
 
 @Injectable()
 export class LiveOrderService {
@@ -155,6 +156,38 @@ export class LiveOrderService {
       ordType: 'market' as const,
       volume: String(input.volume),
     };
+  }
+
+  // 사용자 credential을 복호화한 뒤 Upbit 주문 상태를 조회
+  async getOrder(input: {
+    userId: number;
+    uuid: string;
+  }): Promise<UpbitOrderDetail> {
+    const credential = await this.upbitAuthService.getDecryptedCredential(
+      input.userId,
+    );
+
+    return this.upbitPrivateService.getOrder({
+      accessKey: credential.accessKey,
+      secretKey: credential.secretKey,
+      uuid: input.uuid,
+    });
+  }
+
+  // 사용자 credential을 복호화한 뒤 Upbit 주문 취소 요청
+  async cancelOrder(input: {
+    userId: number;
+    uuid: string;
+  }): Promise<UpbitOrderDetail> {
+    const credential = await this.upbitAuthService.getDecryptedCredential(
+      input.userId,
+    );
+
+    return this.upbitPrivateService.cancelOrder({
+      accessKey: credential.accessKey,
+      secretKey: credential.secretKey,
+      uuid: input.uuid,
+    });
   }
 
   // 테스트 order에 대해서 실패 했을 경우에 대한 응답

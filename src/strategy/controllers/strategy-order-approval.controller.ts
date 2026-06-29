@@ -18,6 +18,7 @@ import { CurrentUser } from '@/auth/decorators/current-user.decorator';
 import { StrategyOrderApprovalService } from '../services/strategy-order-approval.service';
 
 import {
+  ApiSyncLiveOrderApproval,
   ApiGetStrategyOrderApprovals,
   ApiRejectStrategyOrderApproval,
   ApiApproveStrategyOrderApproval,
@@ -81,5 +82,21 @@ export class StrategyOrderApprovalController {
     });
 
     return StrategyOrderApprovalResponseDto.fromEntity(result);
+  }
+
+  @Post(':id/sync-live-order')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(JwtAuthGuard)
+  @ApiSyncLiveOrderApproval()
+  async syncLiveOrder(
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<StrategyOrderApprovalResponseDto> {
+    const approval = await this.approvalService.syncLiveOrder({
+      userId: user.id,
+      approvalId: id,
+    });
+
+    return StrategyOrderApprovalResponseDto.fromEntity(approval);
   }
 }

@@ -3,5 +3,6 @@ export enum StrategyOrderApprovalStatus {
   APPROVED = 'approved',
   REJECTED = 'rejected',
   EXECUTED = 'executed',
+  CANCELLED = 'cancelled',
   FAILED = 'failed',
 }

@@ -51,6 +51,10 @@ export function validateEnv(config: RawEnv): ValidatedEnv {
     DB_NAME: config.DB_NAME ?? 'agentrade',
     TYPEORM_SYNCHRONIZE: parseBoolean(config.TYPEORM_SYNCHRONIZE, false),
     TYPEORM_LOGGING: parseBoolean(config.TYPEORM_LOGGING, true),
+    DATA_COLLECT_TIMEOUT_MS: parsePositiveInteger(
+      config.DATA_COLLECT_TIMEOUT_MS,
+      10000,
+    ),
     UPBIT_BASE_URL: config.UPBIT_BASE_URL ?? 'https://api.upbit.com',
     UPBIT_ACCESS_KEY: config.UPBIT_ACCESS_KEY,
     UPBIT_SECRET_KEY: config.UPBIT_SECRET_KEY,

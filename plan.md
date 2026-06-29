@@ -4,7 +4,7 @@
 
 이 문서는 `backend` 폴더에서 현재까지 어디까지 개발했는지, 이번 세션에서 어떤 방식으로 학습/개발을 진행했는지, 다른 컴퓨터에서 이어서 작업할 때 무엇부터 확인하면 되는지 정리한 인수인계 문서입니다.
 
-현재 백엔드는 NestJS + TypeORM + PostgreSQL + Scalar 기반으로 로컬 회원가입/로그인, 쿠키 기반 access/refresh token, DB 세션, Naver/Kakao OAuth 로그인, 전략 생성/목록/상세/수정/상태 변경/LLM 구조화 흐름까지 1차 구현된 상태입니다. 또한 `strategy_runs` 기반 실행 이력 저장/조회, `POST /strategies/:id/run` 수동 실행 API, `@nestjs/schedule` 기반 자동 실행 흐름, 실제 Upbit 캔들 수집, 사용자별 Upbit credential 암호화 저장, live portfolio 조회, paper portfolio 조회 분기, Naver 뉴스 수집, Upbit DataLab 자산 요약 수집, 전략별 데이터 접근 권한, 전략 판단 모드 설정, LLM 기반 AI decision, risk check, paper order, live order 1차 실행 흐름, 사용자 승인/거절 기반 주문 승인 대기 흐름, 대시보드 1차 조회 API, 전략 실행 중복 방지 보강까지 진행된 상태입니다.
+현재 백엔드는 NestJS + TypeORM + PostgreSQL + Scalar 기반으로 로컬 회원가입/로그인, 쿠키 기반 access/refresh token, DB 세션, Naver/Kakao OAuth 로그인, 전략 생성/목록/상세/수정/상태 변경/LLM 구조화 흐름까지 1차 구현된 상태입니다. 또한 `strategy_runs` 기반 실행 이력 저장/조회, `POST /strategies/:id/run` 수동 실행 API, `@nestjs/schedule` 기반 자동 실행 흐름, 실제 Upbit 캔들 수집, 사용자별 Upbit credential 암호화 저장, live portfolio 조회, paper portfolio 조회 분기, Naver 뉴스 수집, Upbit DataLab 자산 요약 수집, 전략별 데이터 접근 권한, 전략 판단 모드 설정, LLM 기반 AI decision, risk check, paper order, live order 1차 실행 흐름, 사용자 승인/거절 기반 주문 승인 대기 흐름, live 주문 상태 동기화/미체결 주문 취소 흐름, 대시보드 1차 조회 API, 전략 실행 중복 방지 보강까지 진행된 상태입니다.
 
 2026-06-29 현재 중요한 진행 상태:
 
@@ -29,7 +29,18 @@
 - `StrategyRunService.assertNoRunningRun()`은 수동 실행, 다중 scheduler 인스턴스, DB unique index 전 마지막 안전장치로 유지합니다.
 - `StrategyOrderApprovalService.approve()`는 주문 실행 중 예외가 발생해도 approval을 `failed`로 저장하도록 보강했습니다.
 - paper 주문은 내부 잔고 반영까지 끝난 경우 `executed`로 저장하고, live 주문은 Upbit 주문 접수 상태이므로 즉시 `executed`로 보지 않고 `approved` 상태로 남기도록 변경했습니다.
+- `POST /strategy-order-approvals/:id/sync-live-order` API를 추가했습니다.
+- sync-live-order API는 live approval에 저장된 Upbit 주문 uuid를 기준으로 `/v1/order`를 조회하고, Upbit 상태가 `wait`이면 `approved`, `done`이면 `executed`, `cancel`이면 `cancelled`로 approval 상태를 동기화합니다.
+- `src/upbit/types/private/upbit-order-detail.type.ts`를 추가해 Upbit 주문 조회/취소 응답을 내부 타입으로 변환하는 `UpbitOrderDetail.fromResponse()`를 분리했습니다.
+- `UpbitPrivateService.getOrder()`와 `LiveOrderService.getOrder()`를 추가해 live 주문 상세 상태를 조회할 수 있게 했습니다.
+- `UpbitPrivateService.cancelOrder()`와 `LiveOrderService.cancelOrder()`를 추가해 Upbit 미체결 주문을 uuid 기준으로 취소할 수 있게 했습니다.
+- `StrategyOrderApprovalStatus`에 `cancelled`를 추가하고, `TradeOrderStatus`에도 `cancelled`를 추가했습니다.
+- `src/database/migrations/1782701000000-AddCancelledStrategyOrderApprovalStatus.ts` migration을 추가했습니다. 이 migration은 PostgreSQL enum `strategy_order_approval_status`에 `cancelled` 값을 추가합니다.
+- `StrategyOrderApprovalService.cancelOpenLiveOrdersBeforeRun()`을 추가했습니다. 다음 live 전략 실행 전에 기존 `approved` 상태 live 주문을 조회하고, Upbit 상태가 `done`이면 `executed`, 이미 `cancel`이면 `cancelled`, 아직 `wait`이면 취소 후 `cancelled`로 정리합니다.
+- `StrategyRunService.runByStrategy()`는 live 전략의 새 AI 판단을 시작하기 전에 기존 미체결 live 주문을 먼저 정리하도록 변경했습니다.
 - `StrategyExecutionService.collectNews()`는 Naver News API 실패 시 run 전체를 실패시키지 않고 `news` step만 `failed`로 저장하도록 변경했습니다.
+- `NewsDataService`, `AssetSummaryService`에 `DATA_COLLECT_TIMEOUT_MS` 기반 timeout 처리를 추가했습니다.
+- `env.validation.ts`에서 `DATA_COLLECT_TIMEOUT_MS`를 숫자로 파싱하도록 정리했습니다.
 - `pnpm format`을 통해 기존 TypeORM migration 파일들의 Prettier 포맷도 정리되었습니다.
 - 기존 사용자에게 `paper_accounts` row가 없으면 paper 전략의 portfolio step에서 `현재 가상 계좌가 존재하지 않습니다.`가 발생할 수 있음을 확인했습니다. 운영/개발 DB에서는 기존 사용자 backfill이 필요합니다.
 
@@ -44,10 +55,21 @@ GET /dashboard/market-summaries?markets=KRW-BTC,KRW-ETH,KRW-XRP
 GET /dashboard/trade-logs?page=1&limit=20
 ```
 
+2026-06-29 기준 주요 strategy order approval API:
+
+```http
+GET /strategy-order-approvals
+POST /strategy-order-approvals/:id/approve
+POST /strategy-order-approvals/:id/reject
+POST /strategy-order-approvals/:id/sync-live-order
+```
+
 2026-06-29 기준 확인한 이슈와 대응:
 
 - AI decision이 오래 걸리는 동안 1분 scheduler가 같은 전략을 다시 잡아 `이미 실행 중인 전략입니다.` 로그가 반복될 수 있었습니다.
 - 이 문제는 scheduler 조회 시 `NOT EXISTS (running run)` 조건을 추가해 running 중인 전략을 실행 후보에서 제외하는 방식으로 보강했습니다.
+- live 지정가 주문이 체결되지 않고 `wait` 상태로 남아 있으면 다음 전략 실행 시 이전 주문이 뒤늦게 체결될 수 있는 위험이 있습니다.
+- 이 문제는 새 live 전략 실행 전에 기존 `approved` live 주문을 Upbit 기준으로 조회하고, 미체결 주문은 취소한 뒤 다음 AI 판단을 진행하는 방식으로 보강했습니다.
 - `paper_accounts`가 없는 기존 사용자는 paper portfolio 조회가 실패할 수 있으므로 아래 backfill SQL을 먼저 적용할 수 있습니다.
 
 ```sql
@@ -94,12 +116,12 @@ WHERE status = 'running';
 다음 작업 방향:
 
 - 현재 변경 범위가 크므로 `plan.md` 업데이트 후 한 번 커밋하는 것이 좋습니다.
-- 커밋 전 DB에 새 migration 적용 여부를 확인합니다. 필요하면 `pnpm --config.verify-deps-before-run=false migration:run`을 실행합니다.
-- 기존 사용자 `paper_accounts` backfill을 적용합니다.
-- 다음 보강 작업은 `paper` 전략 실행 전 paper account를 보장하는 코드 추가입니다.
-- 그 다음 `NewsDataService`, `AssetSummaryService`의 외부 fetch timeout을 추가합니다.
-- 이후 live 주문 체결 상태 조회/동기화 기능을 추가합니다. Upbit 주문 uuid를 기준으로 주문 상태를 다시 조회해 live 주문이 실제 체결되었는지 확인하는 흐름이 필요합니다.
-- dashboard 1차 API 이후에는 frontend 실제 연동, 주문/승인/audit log 정교화, LangGraph 전환 순서로 확장합니다.
+- 커밋 전 DB에 새 migration 적용 여부를 확인합니다. 현재 필요한 migration은 `1782701000000-AddCancelledStrategyOrderApprovalStatus.ts`이며 적용 명령은 `pnpm migration:run`입니다.
+- 기존 사용자에게 `paper_accounts`가 없다면 위 backfill SQL을 적용합니다.
+- Scalar에서 `POST /strategy-order-approvals/:id/sync-live-order`가 문서에 보이는지 확인합니다.
+- live 주문 테스트는 실제 자산에 영향을 줄 수 있으므로 매우 소액 또는 test order 흐름 중심으로 확인합니다.
+- live 지정가 주문을 만든 뒤 `wait` 상태일 때 다음 전략 실행 전에 `cancelOpenLiveOrdersBeforeRun()`이 기존 주문을 취소하는지 확인합니다.
+- 이후 작업은 주문/승인/audit log 정교화, frontend dashboard 실제 연동, LangGraph 전환 순서로 확장합니다.
 
 2026-06-26 현재 중요한 진행 상태:
 

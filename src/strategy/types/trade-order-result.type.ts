@@ -2,7 +2,12 @@ import { AiOrderType, AiTradeDecision } from './ai-decision-result.type';
 
 export type TradeOrderMode = 'paper' | 'live';
 
-export type TradeOrderStatus = 'created' | 'tested' | 'skipped' | 'failed';
+export type TradeOrderStatus =
+  | 'created'
+  | 'tested'
+  | 'skipped'
+  | 'failed'
+  | 'cancelled';
 
 export type TradeOrderResult = {
   mode: TradeOrderMode;
@@ -15,4 +20,9 @@ export type TradeOrderResult = {
   status: TradeOrderStatus;
   externalOrderId: string | null;
   reason: string;
+  // live 주문 상태 동기화 후 Upbit 원본 상태를 기록
+  liveOrderState?: 'wait' | 'done' | 'cancel' | null;
+  executedVolume?: number | null;
+  remainingVolume?: number | null;
+  paidFee?: number | null;
 };

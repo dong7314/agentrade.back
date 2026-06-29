@@ -6,148 +6,166 @@ import {
 
 import { isRecord } from '@/common/utils/is-record';
 
+import { ConfigService } from '@nestjs/config';
+
 import { AssetSummary, AssetSummarySignal } from '../types/asset-summary.type';
 
 @Injectable()
 export class AssetSummaryService {
+  constructor(private readonly configService: ConfigService) {}
+
   async getSummaryByMarket(market: string): Promise<AssetSummary> {
+    const timeoutMs = this.configService.getOrThrow<number>(
+      'DATA_COLLECT_TIMEOUT_MS',
+    );
     const symbol = this.toSymbol(market);
     const url = `https://datalab.upbit.com/assets/${symbol}/summary`;
 
     // Upbit DataLab 자산 요약 페이지 HTML을 가져옴
     // 이 페이지 안에는 화면 렌더링용 데이터가 React Query dehydrated JSON으로 포함
-    const response = await fetch(url, {
-      headers: {
-        'User-Agent': 'agentrade-backend/1.0',
-      },
-    });
+    try {
+      const response = await fetch(url, {
+        headers: {
+          'User-Agent': 'agentrade-backend/1.0',
+        },
+        signal: AbortSignal.timeout(timeoutMs),
+      });
 
-    if (!response.ok) {
-      throw new ServiceUnavailableException('자산 요약 조회에 실패했습니다.');
+      if (!response.ok) {
+        throw new ServiceUnavailableException('자산 요약 조회에 실패했습니다.');
+      }
+
+      const html = await response.text();
+      const rawText = this.extractBodyText(html);
+
+      // HTML 안에 들어있는 React Query cache에서 필요한 query 데이터 추출
+      // 화면 텍스트를 정규식으로 직접 긁는 것보다 구조가 안정적
+      const assetInfo = this.recordOrNull(
+        this.extractQueryData(html, ['asset', 'info']),
+      );
+      const recentPrices = this.extractQueryData(html, [
+        'exchange',
+        'candles',
+        'recents',
+      ]);
+      const marketCapData = this.extractQueryData(html, [
+        'indicator',
+        'mcap',
+        'assets',
+      ]);
+      const tradingVolumeData = this.extractQueryData(html, [
+        'indicator',
+        'katp',
+        'assets',
+      ]);
+      const premiumData = this.extractQueryData(html, [
+        'indicator',
+        'premium',
+        'assets',
+      ]);
+      const fearGreedData = this.extractQueryData(html, [
+        'indicator',
+        'fear-greed',
+        'assets',
+      ]);
+      const technicalData = this.extractQueryData(html, [
+        'indicator',
+        'tech',
+        'overall',
+        'assets',
+      ]);
+
+      const recent = this.firstRecord(recentPrices);
+      const marketCap = this.firstElementRecord(marketCapData);
+      const tradingVolume = this.firstElementRecord(tradingVolumeData);
+      const premium = this.firstElementRecord(premiumData);
+      const fearGreed = this.firstElementRecord(fearGreedData);
+      const technical = this.firstElementRecord(technicalData);
+      const technicalComponents = this.recordValue(technical, 'components');
+      const volatility = this.parseVolatility(rawText);
+
+      // AI decision 단계에 넘기기 좋은 형태로 원본 DataLab 데이터를 재구성
+      // 수익률/시총/거래대금처럼 ratio로 내려오는 값은 percent 단위로 변환
+      return {
+        source: 'upbit_datalab_asset_summary',
+        market,
+        symbol,
+        url,
+        fetchedAt: new Date(),
+        rawText,
+        asset: {
+          koreanName: this.stringValue(assetInfo, 'koreanName'),
+          englishName: this.stringValue(assetInfo, 'englishName'),
+          marketCapRank: this.numberValue(assetInfo, 'mcapRank'),
+        },
+        price: {
+          tradePrice: this.numberValue(recent, 'tradePrice'),
+          return24hPercent: this.toPercent(
+            this.numberValue(recent, 'changeRatioTradePrice24h') ??
+              this.numberValue(recent, 'changeRatioTradePrice'),
+          ),
+          highPrice24h: this.numberValue(recent, 'highPrice24h'),
+          lowPrice24h: this.numberValue(recent, 'lowPrice24h'),
+        },
+        marketCap: {
+          value:
+            this.numberValue(marketCap, 'marketCap') ??
+            this.numberValue(assetInfo, 'mcap'),
+          change24hPercent: this.toPercent(
+            this.numberValue(marketCap, 'changeRatioMarketCap24h'),
+          ),
+        },
+        tradingVolume: {
+          value24h:
+            this.numberValue(tradingVolume, 'accTradePrice24h') ??
+            this.numberValue(recent, 'candleAccTradePrice24h'),
+          change24hPercent: this.toPercent(
+            this.numberValue(tradingVolume, 'changeRatioAccTradePrice24h'),
+          ),
+        },
+        upbitPremium: {
+          valuePercent: this.numberValue(premium, 'disparityRate'),
+          delta: this.numberValue(premium, 'deltaDisparityRate'),
+        },
+        fearGreed: {
+          score: this.numberValue(fearGreed, 'score'),
+          label: this.toFearGreedLabel(this.numberValue(fearGreed, 'score')),
+          prevScore24h: this.numberValue(fearGreed, 'prevScore24h'),
+          change24hPercent: this.toPercent(
+            this.numberValue(fearGreed, 'changeRatioScore24h'),
+          ),
+        },
+        technicalAnalysis: {
+          score: this.numberValue(technical, 'score'),
+          signal: this.signalValue(technical, 'scoreStatus'),
+          rsi: {
+            value: this.numberValue(technicalComponents, 'rsi'),
+            signal: this.signalValue(technicalComponents, 'rsiStatus'),
+          },
+          bollingerBand: {
+            percentB: this.numberValue(technicalComponents, 'percentB'),
+            signal: this.signalValue(technicalComponents, 'percentBStatus'),
+          },
+          stochastic: {
+            percentK: this.numberValue(technicalComponents, 'percentK'),
+            signal: this.signalValue(technicalComponents, 'percentKStatus'),
+          },
+        },
+        volatility: {
+          volatilityText: volatility.volatilityText,
+          betaText: volatility.betaText,
+          riskAdjustedReturnText: volatility.riskAdjustedReturnText,
+        },
+      };
+    } catch (error) {
+      if (error instanceof Error && error.name === 'TimeoutError') {
+        throw new ServiceUnavailableException(
+          '자산 요약 조회 요청 시간이 초과되었습니다.',
+        );
+      }
+
+      throw error;
     }
-
-    const html = await response.text();
-    const rawText = this.extractBodyText(html);
-
-    // HTML 안에 들어있는 React Query cache에서 필요한 query 데이터 추출
-    // 화면 텍스트를 정규식으로 직접 긁는 것보다 구조가 안정적
-    const assetInfo = this.recordOrNull(
-      this.extractQueryData(html, ['asset', 'info']),
-    );
-    const recentPrices = this.extractQueryData(html, [
-      'exchange',
-      'candles',
-      'recents',
-    ]);
-    const marketCapData = this.extractQueryData(html, [
-      'indicator',
-      'mcap',
-      'assets',
-    ]);
-    const tradingVolumeData = this.extractQueryData(html, [
-      'indicator',
-      'katp',
-      'assets',
-    ]);
-    const premiumData = this.extractQueryData(html, [
-      'indicator',
-      'premium',
-      'assets',
-    ]);
-    const fearGreedData = this.extractQueryData(html, [
-      'indicator',
-      'fear-greed',
-      'assets',
-    ]);
-    const technicalData = this.extractQueryData(html, [
-      'indicator',
-      'tech',
-      'overall',
-      'assets',
-    ]);
-
-    const recent = this.firstRecord(recentPrices);
-    const marketCap = this.firstElementRecord(marketCapData);
-    const tradingVolume = this.firstElementRecord(tradingVolumeData);
-    const premium = this.firstElementRecord(premiumData);
-    const fearGreed = this.firstElementRecord(fearGreedData);
-    const technical = this.firstElementRecord(technicalData);
-    const technicalComponents = this.recordValue(technical, 'components');
-    const volatility = this.parseVolatility(rawText);
-
-    // AI decision 단계에 넘기기 좋은 형태로 원본 DataLab 데이터를 재구성
-    // 수익률/시총/거래대금처럼 ratio로 내려오는 값은 percent 단위로 변환
-    return {
-      source: 'upbit_datalab_asset_summary',
-      market,
-      symbol,
-      url,
-      fetchedAt: new Date(),
-      rawText,
-      asset: {
-        koreanName: this.stringValue(assetInfo, 'koreanName'),
-        englishName: this.stringValue(assetInfo, 'englishName'),
-        marketCapRank: this.numberValue(assetInfo, 'mcapRank'),
-      },
-      price: {
-        tradePrice: this.numberValue(recent, 'tradePrice'),
-        return24hPercent: this.toPercent(
-          this.numberValue(recent, 'changeRatioTradePrice24h') ??
-            this.numberValue(recent, 'changeRatioTradePrice'),
-        ),
-        highPrice24h: this.numberValue(recent, 'highPrice24h'),
-        lowPrice24h: this.numberValue(recent, 'lowPrice24h'),
-      },
-      marketCap: {
-        value:
-          this.numberValue(marketCap, 'marketCap') ??
-          this.numberValue(assetInfo, 'mcap'),
-        change24hPercent: this.toPercent(
-          this.numberValue(marketCap, 'changeRatioMarketCap24h'),
-        ),
-      },
-      tradingVolume: {
-        value24h:
-          this.numberValue(tradingVolume, 'accTradePrice24h') ??
-          this.numberValue(recent, 'candleAccTradePrice24h'),
-        change24hPercent: this.toPercent(
-          this.numberValue(tradingVolume, 'changeRatioAccTradePrice24h'),
-        ),
-      },
-      upbitPremium: {
-        valuePercent: this.numberValue(premium, 'disparityRate'),
-        delta: this.numberValue(premium, 'deltaDisparityRate'),
-      },
-      fearGreed: {
-        score: this.numberValue(fearGreed, 'score'),
-        label: this.toFearGreedLabel(this.numberValue(fearGreed, 'score')),
-        prevScore24h: this.numberValue(fearGreed, 'prevScore24h'),
-        change24hPercent: this.toPercent(
-          this.numberValue(fearGreed, 'changeRatioScore24h'),
-        ),
-      },
-      technicalAnalysis: {
-        score: this.numberValue(technical, 'score'),
-        signal: this.signalValue(technical, 'scoreStatus'),
-        rsi: {
-          value: this.numberValue(technicalComponents, 'rsi'),
-          signal: this.signalValue(technicalComponents, 'rsiStatus'),
-        },
-        bollingerBand: {
-          percentB: this.numberValue(technicalComponents, 'percentB'),
-          signal: this.signalValue(technicalComponents, 'percentBStatus'),
-        },
-        stochastic: {
-          percentK: this.numberValue(technicalComponents, 'percentK'),
-          signal: this.signalValue(technicalComponents, 'percentKStatus'),
-        },
-      },
-      volatility: {
-        volatilityText: volatility.volatilityText,
-        betaText: volatility.betaText,
-        riskAdjustedReturnText: volatility.riskAdjustedReturnText,
-      },
-    };
   }
 
   private extractQueryData(html: string, queryKeyParts: string[]): unknown {

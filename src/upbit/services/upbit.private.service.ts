@@ -9,6 +9,10 @@ import {
 } from '../types/private/upbit-create-order.type';
 import { UpbitBalance } from '../types/private/upbit-balance.type';
 import { UpbitAccountResponse } from '../types/private/upbit-account.response.type';
+import {
+  UpbitOrderDetail,
+  UpbitOrderDetailResponse,
+} from '../types/private/upbit-order-detail.type';
 
 @Injectable()
 export class UpbitPrivateService {
@@ -61,6 +65,82 @@ export class UpbitPrivateService {
     } finally {
       clearTimeout(timeout);
     }
+  }
+
+  // upbit 주문 uuid로 실제 주문 상태를 조회
+  async getOrder(input: {
+    accessKey: string;
+    secretKey: string;
+    uuid: string;
+  }): Promise<UpbitOrderDetail> {
+    const baseUrl = this.configService.getOrThrow<string>('UPBIT_BASE_URL');
+    const timeoutMs = this.configService.getOrThrow<number>('UPBIT_TIMEOUT_MS');
+
+    const url = new URL('/v1/order', baseUrl);
+    const query = { uuid: input.uuid };
+
+    // 실제 요청 URL과 jwt query hash가 같은 query를 보도록 설정
+    url.searchParams.set('uuid', input.uuid);
+
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: {
+        Authorization: this.upbitAuthService.createAuthorizationHeader({
+          accessKey: input.accessKey,
+          secretKey: input.secretKey,
+          query,
+        }),
+      },
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+
+    if (!response.ok) {
+      throw new BadGatewayException(
+        '업비트 주문 조회 api 호출에 실패했습니다.',
+      );
+    }
+
+    const data = (await response.json()) as UpbitOrderDetailResponse;
+
+    return UpbitOrderDetail.fromResponse(data);
+  }
+
+  async cancelOrder(input: {
+    accessKey: string;
+    secretKey: string;
+    uuid: string;
+  }): Promise<UpbitOrderDetail> {
+    const baseUrl = this.configService.getOrThrow<string>('UPBIT_BASE_URL');
+    const timeoutMs = this.configService.getOrThrow<number>('UPBIT_TIMEOUT_MS');
+
+    const url = new URL('/v1/order', baseUrl);
+    const query = { uuid: input.uuid };
+
+    // 실제 요청 URL과 jwt query hash가 같은 query를 보도록 설정
+    url.searchParams.set('uuid', input.uuid);
+
+    const response = await fetch(url, {
+      method: 'DELETE',
+      headers: {
+        Authorization: this.upbitAuthService.createAuthorizationHeader({
+          accessKey: input.accessKey,
+          secretKey: input.secretKey,
+          query,
+        }),
+      },
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+
+    if (!response.ok) {
+      throw new BadGatewayException(
+        '업비트 주문 취소 api 호출에 실패했습니다.',
+      );
+    }
+
+    const data = (await response.json()) as UpbitOrderDetailResponse;
+
+    // upbit 응답을 내부 주문 상세 타입으로 변환
+    return UpbitOrderDetail.fromResponse(data);
   }
 
   // test 주문 진행

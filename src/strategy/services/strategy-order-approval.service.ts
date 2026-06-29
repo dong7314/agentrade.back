@@ -267,4 +267,156 @@ export class StrategyOrderApprovalService {
           : '주문 실행 중 알 수 없는 오류가 발생했습니다.',
     };
   }
+
+  async syncLiveOrder(input: {
+    userId: number;
+    approvalId: number;
+  }): Promise<StrategyOrderApprovalEntity> {
+    // 현재 사용자의 approval만 조회
+    const approval = await this.approvalRepository.findOneBy({
+      id: input.approvalId,
+      userId: input.userId,
+    });
+
+    if (!approval) {
+      throw new NotFoundException('주문 후보가 존재하지 않습니다.');
+    }
+
+    if (approval.strategyMode !== StrategyMode.LIVE) {
+      throw new BadRequestException('live 주문만 상태를 동기화할 수 있습니다.');
+    }
+
+    const uuid = approval.orderResult?.externalOrderId;
+
+    if (!uuid) {
+      throw new BadRequestException('동기화할 Upbit 주문 uuid가 없습니다.');
+    }
+
+    // Upbit에서 실제 주문 상태를 다시 조회
+    const upbitOrder = await this.liveOrderService.getOrder({
+      userId: approval.userId,
+      uuid,
+    });
+
+    const previousResult = approval.orderResult;
+
+    approval.orderResult = {
+      ...previousResult,
+      mode: 'live',
+      market: approval.market,
+      decision: approval.decision,
+      orderType: approval.orderType,
+      amountKrw:
+        previousResult?.amountKrw ??
+        approval.adjustedOrder.estimatedOrderAmountKrw,
+      volume: previousResult?.volume ?? approval.adjustedOrder.estimatedVolume,
+      priceKrw: previousResult?.priceKrw ?? approval.adjustedOrder.priceKrw,
+      status:
+        upbitOrder.state === 'cancel'
+          ? 'cancelled'
+          : (previousResult?.status ?? 'created'),
+      externalOrderId: upbitOrder.uuid,
+      reason: `Upbit 주문 상태를 동기화했습니다. state=${upbitOrder.state}`,
+      liveOrderState: upbitOrder.state,
+      executedVolume: upbitOrder.executedVolume,
+      remainingVolume: upbitOrder.remainingVolume,
+      paidFee: upbitOrder.paidFee,
+    };
+
+    // wait: 주문 접수/대기, done: 체결 완료, cancel: 취소됨
+    if (upbitOrder.state === 'done') {
+      approval.status = StrategyOrderApprovalStatus.EXECUTED;
+    } else if (upbitOrder.state === 'cancel') {
+      approval.status = StrategyOrderApprovalStatus.CANCELLED;
+    } else {
+      approval.status = StrategyOrderApprovalStatus.APPROVED;
+    }
+
+    return this.approvalRepository.save(approval);
+  }
+
+  async cancelOpenLiveOrdersBeforeRun(input: {
+    userId: number;
+    strategyId: number;
+    market: string;
+  }): Promise<void> {
+    const approvals = await this.approvalRepository.find({
+      where: {
+        userId: input.userId,
+        strategyId: input.strategyId,
+        market: input.market,
+        strategyMode: StrategyMode.LIVE,
+        status: StrategyOrderApprovalStatus.APPROVED,
+      },
+    });
+
+    for (const approval of approvals) {
+      const uuid = approval.orderResult?.externalOrderId;
+
+      if (!uuid) {
+        throw new BadRequestException(
+          '기존 live 주문 uuid가 없어 다음 전략을 실행할 수 없습니다.',
+        );
+      }
+
+      // 취소 전에 현재 주문 상태를 먼저 확인
+      const currentOrder = await this.liveOrderService.getOrder({
+        userId: input.userId,
+        uuid,
+      });
+
+      if (currentOrder.state === 'done') {
+        // 이미 체결된 주문이면 executed로만 정리
+        approval.status = StrategyOrderApprovalStatus.EXECUTED;
+        approval.orderResult = {
+          ...approval.orderResult!,
+          liveOrderState: currentOrder.state,
+          executedVolume: currentOrder.executedVolume,
+          remainingVolume: currentOrder.remainingVolume,
+          paidFee: currentOrder.paidFee,
+          reason:
+            '다음 전략 실행 전에 기존 live 주문 체결 상태를 반영했습니다.',
+        };
+
+        await this.approvalRepository.save(approval);
+        continue;
+      }
+
+      if (currentOrder.state === 'cancel') {
+        // 이미 취소된 주문이면 cancelled로 정리
+        approval.status = StrategyOrderApprovalStatus.CANCELLED;
+        approval.orderResult = {
+          ...approval.orderResult!,
+          status: 'cancelled',
+          liveOrderState: currentOrder.state,
+          executedVolume: currentOrder.executedVolume,
+          remainingVolume: currentOrder.remainingVolume,
+          paidFee: currentOrder.paidFee,
+          reason: '기존 live 주문이 이미 취소되어 상태를 반영했습니다.',
+        };
+
+        await this.approvalRepository.save(approval);
+        continue;
+      }
+
+      // 아직 wait 상태면 다음 전략 판단 전에 기존 주문을 취소
+      const cancelledOrder = await this.liveOrderService.cancelOrder({
+        userId: input.userId,
+        uuid,
+      });
+
+      approval.status = StrategyOrderApprovalStatus.CANCELLED;
+      approval.orderResult = {
+        ...approval.orderResult!,
+        status: 'cancelled',
+        liveOrderState: cancelledOrder.state,
+        executedVolume: cancelledOrder.executedVolume,
+        remainingVolume: cancelledOrder.remainingVolume,
+        paidFee: cancelledOrder.paidFee,
+        reason: '다음 전략 실행 전에 미체결 live 주문을 취소했습니다.',
+      };
+
+      await this.approvalRepository.save(approval);
+    }
+  }
 }
