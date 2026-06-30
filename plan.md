@@ -4,11 +4,11 @@
 
 이 문서는 `backend` 폴더에서 현재까지 어디까지 개발했는지, 이번 세션에서 어떤 방식으로 학습/개발을 진행했는지, 다른 컴퓨터에서 이어서 작업할 때 무엇부터 확인하면 되는지 정리한 인수인계 문서입니다.
 
-현재 백엔드는 NestJS + TypeORM + PostgreSQL + Scalar 기반으로 로컬 회원가입/로그인, 쿠키 기반 access/refresh token, DB 세션, Naver/Kakao OAuth 로그인, 전략 생성/목록/상세/수정/상태 변경/LLM 구조화 흐름까지 1차 구현된 상태입니다. 또한 `strategy_runs` 기반 실행 이력 저장/조회, `POST /strategies/:id/run` 수동 실행 API, `@nestjs/schedule` 기반 자동 실행 흐름, 실제 Upbit 캔들 수집, 사용자별 Upbit credential 암호화 저장, live portfolio 조회, paper portfolio 조회 분기, Naver 뉴스 수집, Upbit DataLab 자산 요약 수집, 전략별 데이터 접근 권한, 전략 판단 모드 설정, LLM 기반 AI decision, risk check, paper order, live order 1차 실행 흐름, 사용자 승인/거절 기반 주문 승인 대기 흐름, live 주문 상태 동기화/미체결 주문 취소 흐름, 대시보드 1차 조회 API, 전략 실행 중복 방지 보강, LangGraph 기반 전략 실행 graph 전환, risk check retry loop, graph 조회 API, 실행 중 graph snapshot 저장, 실제 수동 실행 기준 graph 검증까지 진행된 상태입니다.
+현재 백엔드는 NestJS + TypeORM + PostgreSQL + Scalar 기반으로 로컬 회원가입/로그인, 쿠키 기반 access/refresh token, DB 세션, Naver/Kakao OAuth 로그인, 전략 생성/목록/상세/수정/상태 변경/LLM 구조화 흐름까지 1차 구현된 상태입니다. 또한 `strategy_runs` 기반 실행 이력 저장/조회, `POST /strategies/:id/run` 수동 실행 API, `@nestjs/schedule` 기반 자동 실행 흐름, 실제 Upbit 캔들 수집, 사용자별 Upbit credential 암호화 저장, live portfolio 조회, paper portfolio 조회 분기, Naver 뉴스 수집, Upbit DataLab 자산 요약 수집, 전략별 데이터 접근 권한, 전략 판단 모드 설정, LLM 기반 AI decision, risk check, paper order, live order 1차 실행 흐름, 사용자 승인/거절 기반 주문 승인 대기 흐름, live 주문 상태 동기화/미체결 주문 취소 흐름, 대시보드 1차 조회 API, 전략 실행 중복 방지 보강, LangGraph 기반 전략 실행 graph 전환, risk check retry loop, graph 조회 API, 실행 중 graph snapshot 저장, 실제 수동 실행 기준 graph 검증, 관리자 기반 지원 마켓 관리, 전략 생성/수정 시 지원 마켓 검증, 주요 목록 API 필터 보강, 관리자 사용자/권한 관리 API까지 진행된 상태입니다.
 
 2026-06-30 현재 중요한 진행 상태:
 
-- 백엔드 핵심 기능 기준 진행률은 약 93%입니다.
+- 백엔드 핵심 기능 기준 진행률은 약 96%입니다.
 - `@langchain/langgraph` 기반으로 전략 실행 흐름을 `StrategyExecutionGraphService`로 전환했습니다.
 - 기존 `StrategyExecutionService.execute()`는 외부 진입점만 유지하고 내부 실행은 `StrategyExecutionGraphService.run()`에 위임합니다.
 - 실제 작업 단위는 `StrategyExecutionNodeService`로 분리했습니다.
@@ -30,6 +30,16 @@
 - `StrategyRunService`는 graph snapshot이 실행 중 별도 update로 계속 갱신되는 점을 고려해, run 종료 시 최신 `StrategyRunEntity`를 다시 조회한 뒤 status/result/errorMessage만 갱신합니다.
 - `src/database/migrations/1782800000000-AddStrategyRunGraphSnapshot.ts` migration을 추가했습니다. 이 migration은 `strategy_runs.graph_snapshot jsonb` 컬럼을 추가합니다.
 - `graph_snapshot` migration 적용 후 실제 paper 전략 수동 실행 기준으로 graph 조회 흐름을 검증했습니다.
+- `AdminGuard`를 추가해 관리자 전용 API를 보호할 수 있게 했습니다.
+- `TradeMarketModule`을 추가해 서비스에서 지원할 거래 마켓을 관리자가 직접 관리할 수 있게 했습니다.
+- `trade_markets` 테이블과 초기 지원 마켓 `KRW-BTC`, `KRW-ETH`, `KRW-XRP`를 생성하는 migration `1782900000000-CreateTradeMarkets.ts`를 추가했습니다.
+- 일반 사용자는 `GET /trade-markets`로 `enabled=true`인 지원 마켓만 조회하고, 관리자는 `GET /trade-markets/admin`, `POST /trade-markets`, `PATCH /trade-markets/:id`, `DELETE /trade-markets/:id`로 지원 마켓을 관리합니다.
+- `StrategyService.create/update()`에서 전략의 `market`이 `trade_markets`의 활성 지원 마켓인지 검증하도록 연결했습니다.
+- `GET /dashboard/trade-logs`, `GET /strategy-runs`, `GET /strategy-order-approvals`에 전략/마켓/상태/모드/기간 필터를 보강했습니다.
+- `AdminUserController`를 추가해 `GET /admin/users`, `GET /admin/users/:id`, `PATCH /admin/users/:id/permissions` 관리자 API를 만들었습니다.
+- 관리자 사용자 API는 `JwtAuthGuard`와 `AdminGuard`를 함께 사용해 admin role 사용자만 접근할 수 있도록 보호합니다.
+- `PATCH /admin/users/:id/permissions`는 paper trading 권한, live trading 권한, role을 관리자가 부분 수정할 수 있게 합니다.
+- `POST /strategies/parse-preview`는 현재 draft 생성 후 parse 흐름으로 대체 가능하므로 이번 백엔드 마무리 범위에서는 제외했습니다.
 
 2026-06-30 기준 주요 strategy run API:
 
@@ -37,6 +47,24 @@
 GET /strategy-runs
 GET /strategy-runs/:runId
 GET /strategy-runs/:runId/graph
+```
+
+2026-06-30 기준 주요 trade market API:
+
+```http
+GET /trade-markets
+GET /trade-markets/admin
+POST /trade-markets
+PATCH /trade-markets/:id
+DELETE /trade-markets/:id
+```
+
+2026-06-30 기준 주요 admin user API:
+
+```http
+GET /admin/users
+GET /admin/users/:id
+PATCH /admin/users/:id/permissions
 ```
 
 2026-06-30 기준 LangGraph 관련 검증:
@@ -57,12 +85,10 @@ GET /strategy-runs/:runId/graph
 
 2026-06-30 기준 바로 다음 작업:
 
-- `LlmService`에서 `fetch failed`처럼 원인이 흐릿한 에러가 발생했을 때 `error.name`, `error.message`, `error.cause`를 로그 또는 예외 메시지에 남기도록 보강합니다.
-- 로컬 llama.cpp 안정성을 위해 AI decision prompt에 넘기는 market/news/asset summary 데이터를 요약해 payload 크기를 줄입니다.
-- `strategyJudgmentMode=user` 전략을 실행해 approval이 생성되고, graph API 마지막에 `approval: pending` node가 붙는지 확인합니다.
-- `POST /strategy-order-approvals/:id/approve`, `POST /strategy-order-approvals/:id/reject` 후 graph API의 approval node 상태가 바뀌는지 확인합니다.
-- risk retry가 실제로 `ai_decision -> risk_check -> ai_decision` 순서로 남는지 5,000원 미만 주문 케이스로 추가 확인합니다.
-- live 전략은 실제 주문 위험이 있으므로 paper 전략으로 graph/risk/approval 흐름을 충분히 확인한 뒤 소액 정책을 정하고 진행합니다.
+- `GET /admin/users`, `GET /admin/users/:id`, `PATCH /admin/users/:id/permissions`를 Scalar 또는 HTTP client로 수동 검증합니다.
+- 필요하면 관리자가 자기 자신의 role을 `user`로 낮춰 관리자 화면에서 잠기는 케이스를 막는 정책을 추가합니다.
+- TradeMarket의 `market`, `quote`, `symbol` 값이 서로 어긋나지 않도록 생성/수정 검증을 보강할지 결정합니다.
+- 백엔드 핵심 기능은 거의 마무리 단계이므로, 이후에는 프론트 API 연결 전 전체 수동 시나리오를 한 번 더 점검합니다.
 
 2026-06-29 현재 중요한 진행 상태:
 
@@ -253,33 +279,32 @@ StrategyGraphState = {
   - 실행 화면의 "실시간 이벤트" 패널을 위한 API입니다.
   - LangGraph 1차 전환 직후에는 필수는 아니며, `strategy_runs.result.steps` 기반으로 만들 수 있습니다.
   - 실시간성이 필요해지면 `GET /strategy-runs/:runId/events/stream` 같은 SSE로 확장합니다.
-- `GET /upbit/markets?quote=KRW`
-  - `StrategyBuilderScreen`의 마켓 선택 UI를 실제 Upbit 마켓 목록과 연결하기 위한 API입니다.
-  - 응답은 `{ market, symbol, koreanName, englishName }` 형태가 좋습니다.
+- `GET /trade-markets?quote=KRW`
+  - `StrategyBuilderScreen`의 마켓 선택 UI를 서비스에서 지원하는 활성 마켓 목록과 연결하기 위한 API입니다.
+  - 관리자가 직접 지원 마켓을 추가/수정/비활성화하므로, Upbit 전체 마켓을 그대로 노출하지 않습니다.
 - `GET /dashboard/trade-logs` query 보강
-  - 현재는 `page`, `limit`만 지원합니다.
-  - `HistoryScreen`과 trade log 검색/필터를 위해 `strategyId`, `market`, `status`, `mode`, `dateFrom`, `dateTo`, `search`, `sort`를 차후 추가합니다.
+  - `strategyId`, `market`, `status`, `mode`, `dateFrom`, `dateTo` 필터는 구현 완료했습니다.
+  - `search`, `sort`는 실제 프론트에서 필요해질 때 추가합니다.
 - `GET /strategy-runs` query 보강
-  - 현재는 `strategyId`, `status` 중심입니다.
-  - history 화면을 위해 `market`, `dateFrom`, `dateTo`, `sort`를 차후 추가할 수 있습니다.
+  - `strategyId`, `status`, `market`, `dateFrom`, `dateTo` 필터는 구현 완료했습니다.
+  - `sort`는 실제 프론트에서 필요해질 때 추가합니다.
 - `GET /strategy-order-approvals` query 보강
-  - 현재는 `status` 중심입니다.
-  - 승인 내역 화면을 위해 `strategyId`, `market`, `mode`, `dateFrom`, `dateTo`를 차후 추가할 수 있습니다.
+  - `status`, `strategyId`, `market`, `mode`, `dateFrom`, `dateTo` 필터는 구현 완료했습니다.
 - `POST /strategies/parse-preview`
   - 프론트가 "저장 전 AI 구조화 미리보기"를 원할 때 필요한 API입니다.
-  - 현재는 `POST /strategies`로 draft 생성 후 `POST /strategies/:id/parse`를 호출하는 흐름으로 충분하므로 우선순위는 낮습니다.
+  - 현재는 `POST /strategies`로 draft 생성 후 `POST /strategies/:id/parse`를 호출하는 흐름으로 충분하므로 이번 백엔드 마무리 범위에서는 제외합니다.
 - `GET /admin/users`, `PATCH /admin/users/:id/permissions`
   - `SettingsScreen`의 사용자 권한 승격 UI를 위한 API입니다.
-  - 현재 프로젝트 핵심은 개인 전략 실행/학습 흐름이므로 우선순위는 가장 낮습니다.
+  - `GET /admin/users`, `GET /admin/users/:id`, `PATCH /admin/users/:id/permissions` 구현을 완료했습니다.
 
 프론트 연동 전에 맞춰야 할 응답/용어 차이:
 
 - 프론트 목업은 `BTC/KRW` 표기를 쓰지만, 백엔드는 Upbit 기준 `KRW-BTC`를 사용합니다. 실제 연동 시 프론트를 `KRW-BTC` 기준으로 맞춥니다.
-- 프론트 목업의 `AssetSymbol`은 `BTC | ETH | SOL`인데, 현재 백엔드 기본 대시보드 마켓은 `BTC | ETH | XRP` 흐름입니다. 실제 지원 마켓 목록은 `GET /upbit/markets?quote=KRW` 이후 UI에서 동적으로 구성합니다.
+- 프론트 목업의 `AssetSymbol`은 `BTC | ETH | SOL`인데, 현재 백엔드 기본 지원 마켓은 `BTC | ETH | XRP` 흐름입니다. 실제 지원 마켓 목록은 `GET /trade-markets?quote=KRW` 이후 UI에서 동적으로 구성합니다.
 - 프론트 chart 타입은 `time: number`를 기대하고, 백엔드는 `openedAt: Date`를 내려줍니다. 프론트 API adapter에서 `Date.parse(openedAt) / 1000`으로 변환합니다.
 - 프론트 `WorkflowStepStatus`는 `completed | active | waiting`이고, 백엔드 step status는 `succeeded | failed | skipped` 계열입니다. LangGraph graph API에서 UI용 status로 매핑합니다.
 - 프론트 `TradeLogStatus`는 `completed | pending | waiting`이고, 백엔드 approval status는 `pending | approved | rejected | executed | cancelled | failed`입니다. dashboard adapter 또는 DTO에서 화면용 status를 매핑합니다.
-- `SettingsScreen`은 관리자/권한 관리 화면이지만, 현재 백엔드 `UserController`는 비어 있습니다. 해당 화면은 마지막 단계 또는 별도 admin 기능으로 분리합니다.
+- `SettingsScreen`의 관리자/권한 관리 화면은 `GET /admin/users`, `GET /admin/users/:id`, `PATCH /admin/users/:id/permissions`를 기준으로 연결합니다.
 
 LangGraph 이후 백엔드 보강 순서:
 
@@ -291,13 +316,13 @@ LangGraph 이후 백엔드 보강 순서:
 5. approval pending/approved/rejected/executed/cancelled graph node 표시 추가 완료
 6. graph_snapshot migration 실행 및 실제 paper run graph 테스트 완료
 7. LLM fetch 실패 원인 추적을 위한 에러 메시지/로그 보강
-8. AI decision prompt payload 경량화
+8. AI decision prompt payload 경량화 보류
 9. user judgment approval graph 상태 검증
 10. dashboard latest-run 응답을 graph node 상태와 맞춤
-11. GET /upbit/markets?quote=KRW 추가
-12. dashboard trade-logs / strategy-runs / approvals 필터 보강
-13. 필요하면 POST /strategies/parse-preview 추가
-14. settings/admin user API는 가장 마지막에 검토
+11. TradeMarket 관리 API 및 전략 market 검증 추가 완료
+12. dashboard trade-logs / strategy-runs / approvals 필터 보강 완료
+13. POST /strategies/parse-preview는 현재 범위에서 제외
+14. settings/admin user API 구현 완료
 15. 그 다음 frontend 실제 API 연결
 ```
 
@@ -305,13 +330,15 @@ LangGraph 이후 백엔드 보강 순서:
 
 - 현재 변경 범위는 한 번 커밋해서 닫는 것이 좋습니다.
 - `graph_snapshot` migration 적용과 실제 LangGraph paper run 검증은 완료된 상태입니다.
-- 다음 주요 작업은 LLM 호출 실패 원인을 더 잘 볼 수 있도록 `LlmService` 에러 메시지/로그를 보강하는 것입니다.
-- 그 다음 AI decision prompt payload를 줄여 로컬 llama.cpp가 더 안정적으로 응답하도록 정리합니다.
-- risk retry가 실제로 `ai_decision -> risk_check -> ai_decision` 순서로 남는지 5,000원 미만 주문 케이스로 추가 검증합니다.
-- 사용자 확인 모드에서 approval이 생성되고 graph API에 `approval pending` node가 붙는지 확인합니다.
-- 승인/거절 API 호출 후 graph API의 approval node 상태가 바뀌는지 확인합니다.
+- LLM 호출 실패 원인을 더 잘 볼 수 있도록 `LlmService` 에러 메시지/로그를 보강했습니다.
+- AI decision prompt payload 경량화는 현재 LLM context 처리 능력을 고려해 보류했습니다.
+- 사용자 확인 모드 approval graph 상태 검증은 완료했습니다.
+- TradeMarket 관리 API와 전략 market 검증은 구현되었고, migration 적용 및 수동 검증까지 완료했습니다.
+- dashboard trade-logs / strategy-runs / approvals 필터 보강은 구현되었습니다.
+- settings/admin user API는 구현과 docs 연결이 완료되었고, 수동 검증이 남았습니다.
 - 전략 pause/archive/delete 시 live 미체결 주문 정리는 LangGraph 검증 이후 차후 운영 안전장치로 진행합니다.
-- frontend dashboard 실제 연동은 백엔드 LangGraph 전환과 주요 실행 검증이 끝난 뒤 마지막 단계에서 진행합니다.
+- 다음 작업은 admin user API 수동 검증과, 필요 시 self-demotion 방지 같은 운영 정책 보강입니다.
+- frontend dashboard 실제 연동은 백엔드 핵심 API 정리가 끝난 뒤 마지막 단계에서 진행합니다.
 
 2026-06-26 현재 중요한 진행 상태:
 
@@ -2207,26 +2234,31 @@ strategyStatus=archived
 
 ### 16.10 Role Guard와 관리자 권한 API
 
-인증 기반 다음 단계로는 관리자 권한 기반을 만드는 것이 좋습니다.
+인증 기반 관리자 권한 API는 2026-06-30 기준 1차 구현이 완료되었습니다.
 
-추천 작업:
+현재 구현:
 
-1. `@Roles()` decorator 생성
-2. `RolesGuard` 생성
-3. `JwtAuthGuard` 이후 role 검사
-4. 관리자 전용 사용자 목록 API
-5. 사용자 role 변경 API
-6. paper/live trading 권한 변경 API
+1. `AdminGuard` 생성
+2. `JwtAuthGuard` 이후 `request.user.role === admin` 검사
+3. 관리자 전용 사용자 목록 API
+4. 관리자 전용 사용자 상세 API
+5. 사용자 role, paper/live trading 권한 변경 API
 
-예상 API:
+현재 API:
 
 ```http
 GET /admin/users
-PATCH /admin/users/:id/role
-PATCH /admin/users/:id/trading-permissions
+GET /admin/users/:id
+PATCH /admin/users/:id/permissions
 ```
 
-프론트 설정 화면은 거창한 설정 시스템보다 "특정 사용자의 권한을 올려주는 관리자 도구" 정도면 충분합니다.
+프론트 설정 화면은 거창한 설정 시스템보다 "특정 사용자의 권한을 올려주는 관리자 도구" 정도면 충분합니다. 현재 API는 이 목적에 맞춰 사용자 검색, role 변경, paper/live trading 권한 변경까지만 담당합니다.
+
+다음에 검토할 수 있는 보강:
+
+- 관리자가 자기 자신의 role을 `user`로 낮춰 관리자 화면에서 잠기는 케이스 방지
+- 마지막 관리자 계정을 일반 사용자로 낮추는 케이스 방지
+- 사용자 권한 변경 이력 audit log 저장
 
 ## 17. 이후 큰 개발 로드맵
 

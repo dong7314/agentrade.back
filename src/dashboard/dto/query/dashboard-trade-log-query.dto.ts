@@ -1,7 +1,6 @@
 import { Type } from 'class-transformer';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import {
-  Max,
   Min,
   IsInt,
   IsEnum,
@@ -11,24 +10,10 @@ import {
 } from 'class-validator';
 
 import { StrategyMode } from '@/strategy/enums/strategy-mode.enum';
+import { PaginationQueryDto } from '@/common/dto/pagination-query.dto';
 import { StrategyOrderApprovalStatus } from '@/strategy/enums/strategy-order-approval-status.enum';
 
-export class DashboardTradeLogsQueryDto {
-  @Type(() => Number)
-  @IsInt()
-  @Min(1)
-  @IsOptional()
-  @ApiPropertyOptional({ example: 1 })
-  page?: number = 1;
-
-  @Type(() => Number)
-  @IsInt()
-  @Min(1)
-  @Max(50)
-  @IsOptional()
-  @ApiPropertyOptional({ example: 20 })
-  limit?: number = 20;
-
+export class DashboardTradeLogsQueryDto extends PaginationQueryDto {
   @Type(() => Number)
   @IsInt()
   @Min(1)
