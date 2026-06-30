@@ -1,13 +1,12 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
-import { StrategyRunStatus } from '@/strategy/enums/strategy-run-status.enum';
 import { StrategyOrderApprovalStatus } from '@/strategy/enums/strategy-order-approval-status.enum';
 
 export class DashboardLatestRunStepDto {
   @ApiProperty({ example: 'ai_decision' })
   name!: string;
 
-  @ApiProperty({ example: StrategyRunStatus.SUCCEEDED })
+  @ApiProperty({ example: 'succeeded' })
   status!: string;
 
   @ApiProperty({ example: 'AI 판단을 완료했습니다.' })
@@ -24,10 +23,7 @@ export class DashboardLatestRunResponseDto {
   @ApiProperty({ example: 3 })
   strategyId!: number;
 
-  @ApiProperty({
-    enum: StrategyRunStatus,
-    example: StrategyRunStatus.SUCCEEDED,
-  })
+  @ApiProperty({ example: 'succeeded' })
   status!: string;
 
   @ApiProperty({ example: 'buy', nullable: true })
@@ -44,6 +40,9 @@ export class DashboardLatestRunResponseDto {
 
   @ApiProperty({ type: [DashboardLatestRunStepDto] })
   steps!: DashboardLatestRunStepDto[];
+
+  @ApiProperty({ example: 'ai_decision', nullable: true })
+  currentStepName!: string | null;
 
   @ApiProperty({ example: 5, nullable: true })
   approvalId!: number | null;

@@ -1,5 +1,7 @@
 import {
+  Logger,
   Injectable,
+  HttpException,
   BadGatewayException,
   ServiceUnavailableException,
 } from '@nestjs/common';
@@ -10,6 +12,8 @@ import { LlmChatCompletionResponseDto } from '../dto/llm-chat-completion.respons
 
 @Injectable()
 export class LlmService {
+  private readonly logger = new Logger(LlmService.name);
+
   constructor(private readonly configService: ConfigService) {}
 
   async createChatCompletionContent(input: {
@@ -64,7 +68,23 @@ export class LlmService {
       });
 
       if (!response.ok) {
-        throw new ServiceUnavailableException(`LLM 서버 요청에 실패했습니다.`);
+        // llama.cpp가 4xx/5xx를 반환하면 status와 body 일부를 로그로 남김
+        const errorBody = await response.text().catch(() => '');
+
+        this.logger.warn(
+          JSON.stringify({
+            message: 'LLM server returned non-2xx response',
+            status: response.status,
+            statusText: response.statusText,
+            body: errorBody.slice(0, 1000),
+            baseUrl,
+            model,
+          }),
+        );
+
+        throw new ServiceUnavailableException(
+          `LLM 서버 요청에 실패했습니다. status=${response.status}`,
+        );
       }
 
       const data = (await response.json()) as LlmChatCompletionResponseDto;
@@ -76,15 +96,62 @@ export class LlmService {
 
       return content;
     } catch (error) {
+      // 위에서 직접 만든 Nest 예외는 그대로 밖으로 전달
+      if (error instanceof HttpException) {
+        throw error;
+      }
+
+      const errorName = error instanceof Error ? error.name : 'UnknownError';
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+      const errorCause =
+        error instanceof Error && error.cause
+          ? this.stringifyErrorCause(error.cause)
+          : undefined;
+
+      // fetch failed, ECONNREFUSED, timeout 같은 실제 원인을 로그로 확인하기 위함
+      this.logger.error(
+        JSON.stringify({
+          message: 'LLM chat completion fetch failed',
+          errorName,
+          errorMessage,
+          errorCause,
+          baseUrl,
+          model,
+          timeoutMs,
+          maxTokens,
+          temperature,
+        }),
+        error instanceof Error ? error.stack : undefined,
+      );
+
       if (error instanceof Error && error.name === 'AbortError') {
         throw new ServiceUnavailableException(
           'LLM 서버 요청 시간이 초과되었습니다.',
         );
       }
 
-      throw error;
+      throw new ServiceUnavailableException(
+        `LLM 서버 호출 중 오류가 발생했습니다: ${errorMessage}`,
+      );
     } finally {
       clearTimeout(timeout);
+    }
+  }
+
+  private stringifyErrorCause(cause: unknown): string {
+    if (cause instanceof Error) {
+      return `${cause.name}: ${cause.message}`;
+    }
+
+    if (typeof cause === 'string') {
+      return cause;
+    }
+
+    try {
+      return JSON.stringify(cause);
+    } catch {
+      return 'Unable to stringify error cause.';
     }
   }
 }
