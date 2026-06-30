@@ -1,9 +1,15 @@
 import {
-  BadRequestException,
   Injectable,
   NotFoundException,
+  BadRequestException,
 } from '@nestjs/common';
-import { Repository } from 'typeorm';
+import {
+  Between,
+  Repository,
+  LessThanOrEqual,
+  MoreThanOrEqual,
+  FindOptionsWhere,
+} from 'typeorm';
 import { InjectRepository } from '@nestjs/typeorm';
 
 import { StrategyEntity } from '../entities/strategy.entity';
@@ -38,11 +44,27 @@ export class StrategyOrderApprovalService {
   ): Promise<PaginatedResult<StrategyOrderApprovalEntity>> {
     const { page, limit } = query;
 
+    const where: FindOptionsWhere<StrategyOrderApprovalEntity> = {
+      userId,
+      ...(query.strategyId ? { strategyId: query.strategyId } : {}),
+      ...(query.market ? { market: query.market } : {}),
+      ...(query.mode ? { strategyMode: query.mode } : {}),
+      ...(query.status ? { status: query.status } : {}),
+    };
+
+    if (query.dateFrom && query.dateTo) {
+      where.createdAt = Between(
+        new Date(query.dateFrom),
+        new Date(query.dateTo),
+      );
+    } else if (query.dateFrom) {
+      where.createdAt = MoreThanOrEqual(new Date(query.dateFrom));
+    } else if (query.dateTo) {
+      where.createdAt = LessThanOrEqual(new Date(query.dateTo));
+    }
+
     const [items, total] = await this.approvalRepository.findAndCount({
-      where: {
-        userId,
-        ...(query.status ? { status: query.status } : {}),
-      },
+      where,
       order: { createdAt: 'DESC' },
       skip: (page - 1) * limit,
       take: limit,

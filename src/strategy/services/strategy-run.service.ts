@@ -3,7 +3,15 @@ import {
   NotFoundException,
   BadRequestException,
 } from '@nestjs/common';
-import { DataSource, Repository } from 'typeorm';
+import {
+  Between,
+  DataSource,
+  FindOptionsWhere,
+  In,
+  LessThanOrEqual,
+  MoreThanOrEqual,
+  Repository,
+} from 'typeorm';
 import { InjectRepository } from '@nestjs/typeorm';
 
 import { StrategyEntity } from '../entities/strategy.entity';
@@ -44,12 +52,58 @@ export class StrategyRunService {
   ): Promise<PaginatedResult<StrategyRunEntity>> {
     const { page, limit } = query;
 
+    const where: FindOptionsWhere<StrategyRunEntity> = {
+      userId,
+      ...(query.status ? { status: query.status } : {}),
+      ...(query.strategyId ? { strategyId: query.strategyId } : {}),
+    };
+
+    if (query.market) {
+      // strategy_runs에는 market 컬럼이 없으므로, 먼저 해당 market의 strategy id를 구해서 run을 필터링
+      const strategies = await this.strategyRepository.find({
+        where: {
+          userId,
+          market: query.market,
+        },
+        select: {
+          id: true,
+        },
+      });
+
+      const strategyIds = strategies.map((strategy) => strategy.id);
+
+      if (strategyIds.length === 0) {
+        return {
+          items: [],
+          meta: createPaginationMeta({ page, limit, total: 0 }),
+        };
+      }
+
+      if (query.strategyId && !strategyIds.includes(query.strategyId)) {
+        return {
+          items: [],
+          meta: createPaginationMeta({ page, limit, total: 0 }),
+        };
+      }
+
+      if (!query.strategyId) {
+        where.strategyId = In(strategyIds);
+      }
+    }
+
+    if (query.dateFrom && query.dateTo) {
+      where.startedAt = Between(
+        new Date(query.dateFrom),
+        new Date(query.dateTo),
+      );
+    } else if (query.dateFrom) {
+      where.startedAt = MoreThanOrEqual(new Date(query.dateFrom));
+    } else if (query.dateTo) {
+      where.startedAt = LessThanOrEqual(new Date(query.dateTo));
+    }
+
     const [items, total] = await this.strategyRunRepository.findAndCount({
-      where: {
-        userId,
-        ...(query.status ? { status: query.status } : {}),
-        ...(query.strategyId ? { strategyId: query.strategyId } : {}),
-      },
+      where,
       order: { createdAt: 'DESC' },
       skip: (page - 1) * limit,
       take: limit,

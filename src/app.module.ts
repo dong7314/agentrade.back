@@ -14,6 +14,7 @@ import { UserModule } from './user/user.module';
 import { StrategyModule } from './strategy/strategy.module';
 import { ScheduleModule } from '@nestjs/schedule';
 import { DashboardModule } from './dashboard/dashboard.module';
+import { TradeMarketModule } from './trade-market/trade-market.module';
 
 @Module({
   imports: [
@@ -41,6 +42,7 @@ import { DashboardModule } from './dashboard/dashboard.module';
     UserModule,
     StrategyModule,
     DashboardModule,
+    TradeMarketModule,
   ],
   controllers: [AppController],
   providers: [AppService],

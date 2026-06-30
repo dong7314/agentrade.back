@@ -79,10 +79,42 @@ export function ApiGetStrategyOrderApprovals() {
       description: '페이지당 항목 수입니다. 기본값은 15, 최대값은 50입니다.',
     }),
     ApiQuery({
+      name: 'strategyId',
+      required: false,
+      example: 3,
+      description: '특정 전략의 승인 이력만 조회할 때 사용하는 전략 ID입니다.',
+    }),
+    ApiQuery({
+      name: 'market',
+      required: false,
+      example: 'KRW-BTC',
+      description: '특정 마켓의 승인 이력만 조회할 때 사용합니다.',
+    }),
+    ApiQuery({
+      name: 'mode',
+      required: false,
+      enum: StrategyMode,
+      example: StrategyMode.PAPER,
+      description: 'paper 또는 live 전략 모드 기준 필터입니다.',
+    }),
+    ApiQuery({
       name: 'status',
       required: false,
       enum: StrategyOrderApprovalStatus,
+      example: StrategyOrderApprovalStatus.PENDING,
       description: '승인 상태 필터입니다.',
+    }),
+    ApiQuery({
+      name: 'dateFrom',
+      required: false,
+      example: '2026-06-01T00:00:00.000Z',
+      description: '이 시각 이후 생성된 승인 이력을 조회합니다.',
+    }),
+    ApiQuery({
+      name: 'dateTo',
+      required: false,
+      example: '2026-06-30T23:59:59.999Z',
+      description: '이 시각 이전 생성된 승인 이력을 조회합니다.',
     }),
     ApiOkResponse({
       description: '전략 주문 승인 목록 조회 성공',
@@ -101,7 +133,8 @@ export function ApiGetStrategyOrderApprovals() {
       },
     }),
     ApiBadRequestResponse({
-      description: '페이지네이션 또는 status 필터 값이 유효하지 않습니다.',
+      description:
+        '페이지네이션 또는 필터 값이 유효하지 않습니다. page, limit, strategyId, market, mode, status, dateFrom, dateTo 값을 확인해야 합니다.',
     }),
     ApiUnauthorizedResponse({
       description: 'access_token 쿠키가 없거나 유효하지 않습니다.',

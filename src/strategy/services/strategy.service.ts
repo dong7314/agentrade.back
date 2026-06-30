@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 
 import { UserService } from '@/user/services/user.service';
+import { TradeMarketService } from '@/trade-market/services/trade-market.service';
 import { StrategyParseService } from './strategy-parse.service';
 
 import { calculateNextRunAt } from '../utils/calculate-next-run-at';
@@ -26,6 +27,7 @@ export class StrategyService {
     @InjectRepository(StrategyEntity)
     private readonly strategyRepository: Repository<StrategyEntity>,
     private readonly userService: UserService,
+    private readonly tradeMarketService: TradeMarketService,
     private readonly strategyParseService: StrategyParseService,
   ) {}
 
@@ -92,6 +94,9 @@ export class StrategyService {
       throw new NotFoundException('사용자를 찾을 수 없습니다.');
     }
 
+    // 전략 생성 전에 관리자가 허용한 마켓인지 확인
+    await this.assertSupportedMarket(input.market);
+
     const strategyMode = input.strategyMode ?? StrategyMode.PAPER;
     const strategyJudgmentMode =
       input.strategyJudgmentMode ?? StrategyJudgmentMode.USER;
@@ -149,6 +154,10 @@ export class StrategyService {
 
     if (input.strategyMode === StrategyMode.LIVE && !user.liveTradingEnabled) {
       throw new BadRequestException('실거래 권한이 없는 사용자입니다.');
+    }
+
+    if (input.market && input.market !== strategy.market) {
+      await this.assertSupportedMarket(input.market);
     }
 
     strategy.name = input.name ?? strategy.name;
@@ -289,5 +298,15 @@ export class StrategyService {
     strategy.strategyStatus = StrategyStatus.ARCHIVED;
     strategy.enabled = false;
     strategy.nextRunAt = null;
+  }
+
+  // 마켓 유효성 검사 로직
+  private async assertSupportedMarket(market: string): Promise<void> {
+    const tradeMarket =
+      await this.tradeMarketService.findEnabledByMarket(market);
+
+    if (!tradeMarket) {
+      throw new BadRequestException('지원하지 않는 마켓입니다.');
+    }
   }
 }

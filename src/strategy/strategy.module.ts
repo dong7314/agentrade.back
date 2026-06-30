@@ -5,6 +5,7 @@ import { LlmModule } from '@/llm/llm.module';
 import { UserModule } from '@/user/user.module';
 import { UpbitModule } from '@/upbit/upbit.module';
 import { DataCollectModule } from '@/data-collect/data-collect.module';
+import { TradeMarketModule } from '@/trade-market/trade-market.module';
 import { PaperTradingModule } from '@/paper-trading/paper-trading.module';
 
 import { StrategyService } from './services/strategy.service';
@@ -38,6 +39,7 @@ import { StrategyOrderApprovalEntity } from './entities/strategy-order-approval.
     LlmModule,
     UpbitModule,
     DataCollectModule,
+    TradeMarketModule,
     PaperTradingModule,
   ],
   controllers: [

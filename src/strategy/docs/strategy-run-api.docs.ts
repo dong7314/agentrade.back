@@ -188,10 +188,30 @@ export function ApiGetStrategyRuns() {
       description: '특정 전략의 실행 이력만 조회할 때 사용하는 전략 ID입니다.',
     }),
     ApiQuery({
+      name: 'market',
+      required: false,
+      example: 'KRW-BTC',
+      description:
+        '특정 마켓의 실행 이력만 조회할 때 사용합니다. strategy_runs는 strategyId를 통해 strategies.market을 기준으로 필터링합니다.',
+    }),
+    ApiQuery({
       name: 'status',
       required: false,
       enum: StrategyRunStatus,
+      example: StrategyRunStatus.SUCCEEDED,
       description: '전략 실행 상태 필터입니다.',
+    }),
+    ApiQuery({
+      name: 'dateFrom',
+      required: false,
+      example: '2026-06-01T00:00:00.000Z',
+      description: '이 시각 이후 시작된 전략 실행 이력을 조회합니다.',
+    }),
+    ApiQuery({
+      name: 'dateTo',
+      required: false,
+      example: '2026-06-30T23:59:59.999Z',
+      description: '이 시각 이전 시작된 전략 실행 이력을 조회합니다.',
     }),
     ApiOkResponse({
       description: '전략 실행 이력 목록 조회 성공',
@@ -211,7 +231,7 @@ export function ApiGetStrategyRuns() {
     }),
     ApiBadRequestResponse({
       description:
-        '페이지네이션 또는 필터 값이 유효하지 않습니다. page, limit, strategyId, status 값을 확인해야 합니다.',
+        '페이지네이션 또는 필터 값이 유효하지 않습니다. page, limit, strategyId, market, status, dateFrom, dateTo 값을 확인해야 합니다.',
     }),
     ApiUnauthorizedResponse({
       description: 'access_token 쿠키가 없거나 유효하지 않습니다.',

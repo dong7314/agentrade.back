@@ -10,6 +10,9 @@ import {
   ApiUnauthorizedResponse,
 } from '@nestjs/swagger';
 
+import { StrategyMode } from '@/strategy/enums/strategy-mode.enum';
+import { StrategyOrderApprovalStatus } from '@/strategy/enums/strategy-order-approval-status.enum';
+
 import { DashboardPortfolioMode } from '../enums/dashboard-portfolio-mode.enum';
 import { DashboardChartResponseDto } from '../dto/response/dashboard-chart-response.dto';
 import { DashboardLatestRunResponseDto } from '../dto/response/dashboard-latest-run-response.dto';
@@ -168,12 +171,51 @@ export function ApiGetDashboardTradeLogs() {
       example: 20,
       description: '페이지당 항목 수입니다. 기본값은 20, 최대값은 50입니다.',
     }),
+    ApiQuery({
+      name: 'strategyId',
+      required: false,
+      example: 3,
+      description: '특정 전략의 거래 로그만 조회할 때 사용합니다.',
+    }),
+    ApiQuery({
+      name: 'market',
+      required: false,
+      example: 'KRW-BTC',
+      description: '특정 마켓의 거래 로그만 조회할 때 사용합니다.',
+    }),
+    ApiQuery({
+      name: 'mode',
+      required: false,
+      enum: StrategyMode,
+      example: StrategyMode.PAPER,
+      description: 'paper 또는 live 전략 모드 기준 필터입니다.',
+    }),
+    ApiQuery({
+      name: 'status',
+      required: false,
+      enum: StrategyOrderApprovalStatus,
+      example: StrategyOrderApprovalStatus.EXECUTED,
+      description: 'approval/order 상태 기준 필터입니다.',
+    }),
+    ApiQuery({
+      name: 'dateFrom',
+      required: false,
+      example: '2026-06-01T00:00:00.000Z',
+      description: '이 시각 이후 생성된 거래 로그를 조회합니다.',
+    }),
+    ApiQuery({
+      name: 'dateTo',
+      required: false,
+      example: '2026-06-30T23:59:59.999Z',
+      description: '이 시각 이전 생성된 거래 로그를 조회합니다.',
+    }),
     ApiOkResponse({
       description: '거래 로그 조회 성공',
       type: DashboardTradeLogsResponseDto,
     }),
     ApiBadRequestResponse({
-      description: 'page 또는 limit query 값이 유효하지 않습니다.',
+      description:
+        'page, limit, strategyId, market, mode, status, dateFrom, dateTo query 값이 유효하지 않습니다.',
     }),
     ApiUnauthorizedResponse({
       description: 'access_token 쿠키가 없거나 유효하지 않습니다.',
