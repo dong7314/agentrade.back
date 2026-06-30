@@ -14,7 +14,10 @@ import { StrategyRunService } from './services/strategy-run.service';
 import { StrategyParseService } from './services/strategy-parse.service';
 import { StrategySchedulerService } from './services/strategy-scheduler.service';
 import { StrategyExecutionService } from './services/strategy-execution.service';
+import { StrategyRunProgressService } from './services/strategy-run-progress.service';
 import { StrategyOrderApprovalService } from './services/strategy-order-approval.service';
+import { StrategyExecutionNodeService } from './services/strategy-execution-node.service';
+import { StrategyExecutionGraphService } from './services/strategy-execution-graph.service';
 
 import { StrategyController } from './controllers/strategy.controller';
 import { StrategyRunController } from './controllers/strategy-run.controller';
@@ -44,13 +47,16 @@ import { StrategyOrderApprovalEntity } from './entities/strategy-order-approval.
   ],
   providers: [
     StrategyService,
+    RiskCheckService,
+    AiDecisionService,
     StrategyRunService,
     StrategyParseService,
     StrategySchedulerService,
     StrategyExecutionService,
+    StrategyRunProgressService,
+    StrategyExecutionNodeService,
     StrategyOrderApprovalService,
-    RiskCheckService,
-    AiDecisionService,
+    StrategyExecutionGraphService,
   ],
 })
 export class StrategyModule {}

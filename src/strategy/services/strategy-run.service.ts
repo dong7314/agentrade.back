@@ -23,6 +23,7 @@ import { StrategyStatus } from '../enums/strategy-status.enum';
 import { PaginatedResult } from '@/common/types/paginated.type';
 import { StrategyRunStatus } from '../enums/strategy-run-status.enum';
 import { FindStrategyRunsQueryDto } from '../dto/find-strategy-run.query.dto';
+import { StrategyRunGraphResponseDto } from '../dto/strategy-run-graph-response.dto';
 
 @Injectable()
 export class StrategyRunService {
@@ -77,6 +78,24 @@ export class StrategyRunService {
     }
 
     return strategyRun;
+  }
+
+  async findGraphByStrategyRunId(
+    strategyRunId: number,
+    userId: number,
+  ): Promise<StrategyRunGraphResponseDto> {
+    // 기존 권한 체크 포함된 조회 메서드를 재사용
+    const run = await this.findOneByStrategyRunId(strategyRunId, userId);
+
+    // 사용자 확인 모드에서는 run과 연결된 approval이 있을 수 있음
+    const approval =
+      await this.strategyOrderApprovalService.findOneByStrategyRunId({
+        userId,
+        strategyRunId,
+      });
+
+    // approval이 있으면 graph에 사용자 승인 node를 추가
+    return StrategyRunGraphResponseDto.fromEntity(run, approval);
   }
 
   // 전략 이력 생성
@@ -168,7 +187,18 @@ export class StrategyRunService {
 
       return this.dataSource.transaction(async (manager) => {
         await manager.save(StrategyEntity, strategy);
-        return manager.save(StrategyRunEntity, strategyRun);
+
+        // graph_snapshot은 실행 중 별도 update로 계속 갱신되므로, 최신 run을 다시 읽고 필요한 컬럼만 변경
+        const latestRun = await manager.findOneByOrFail(StrategyRunEntity, {
+          id: strategyRun.id,
+        });
+
+        latestRun.status = StrategyRunStatus.SUCCEEDED;
+        latestRun.finishedAt = strategyRun.finishedAt;
+        latestRun.result = result;
+        latestRun.errorMessage = null;
+
+        return manager.save(StrategyRunEntity, latestRun);
       });
     } catch (error) {
       strategyRun.status = StrategyRunStatus.FAILED;
@@ -185,7 +215,18 @@ export class StrategyRunService {
 
       return this.dataSource.transaction(async (manager) => {
         await manager.save(StrategyEntity, strategy);
-        return manager.save(StrategyRunEntity, strategyRun);
+
+        // 실패 시에도 실행 중 저장된 graph_snapshot을 덮어쓰지 않도록 최신 run을 다시 읽어서 저장
+        const latestRun = await manager.findOneByOrFail(StrategyRunEntity, {
+          id: strategyRun.id,
+        });
+
+        latestRun.status = StrategyRunStatus.FAILED;
+        latestRun.finishedAt = strategyRun.finishedAt;
+        latestRun.errorMessage = strategyRun.errorMessage;
+        latestRun.result = null;
+
+        return manager.save(StrategyRunEntity, latestRun);
       });
     }
   }

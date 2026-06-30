@@ -1,10 +1,68 @@
 # Agentrade Backend Plan
 
-최종 업데이트: 2026-06-29
+최종 업데이트: 2026-06-30
 
 이 문서는 `backend` 폴더에서 현재까지 어디까지 개발했는지, 이번 세션에서 어떤 방식으로 학습/개발을 진행했는지, 다른 컴퓨터에서 이어서 작업할 때 무엇부터 확인하면 되는지 정리한 인수인계 문서입니다.
 
-현재 백엔드는 NestJS + TypeORM + PostgreSQL + Scalar 기반으로 로컬 회원가입/로그인, 쿠키 기반 access/refresh token, DB 세션, Naver/Kakao OAuth 로그인, 전략 생성/목록/상세/수정/상태 변경/LLM 구조화 흐름까지 1차 구현된 상태입니다. 또한 `strategy_runs` 기반 실행 이력 저장/조회, `POST /strategies/:id/run` 수동 실행 API, `@nestjs/schedule` 기반 자동 실행 흐름, 실제 Upbit 캔들 수집, 사용자별 Upbit credential 암호화 저장, live portfolio 조회, paper portfolio 조회 분기, Naver 뉴스 수집, Upbit DataLab 자산 요약 수집, 전략별 데이터 접근 권한, 전략 판단 모드 설정, LLM 기반 AI decision, risk check, paper order, live order 1차 실행 흐름, 사용자 승인/거절 기반 주문 승인 대기 흐름, live 주문 상태 동기화/미체결 주문 취소 흐름, 대시보드 1차 조회 API, 전략 실행 중복 방지 보강까지 진행된 상태입니다.
+현재 백엔드는 NestJS + TypeORM + PostgreSQL + Scalar 기반으로 로컬 회원가입/로그인, 쿠키 기반 access/refresh token, DB 세션, Naver/Kakao OAuth 로그인, 전략 생성/목록/상세/수정/상태 변경/LLM 구조화 흐름까지 1차 구현된 상태입니다. 또한 `strategy_runs` 기반 실행 이력 저장/조회, `POST /strategies/:id/run` 수동 실행 API, `@nestjs/schedule` 기반 자동 실행 흐름, 실제 Upbit 캔들 수집, 사용자별 Upbit credential 암호화 저장, live portfolio 조회, paper portfolio 조회 분기, Naver 뉴스 수집, Upbit DataLab 자산 요약 수집, 전략별 데이터 접근 권한, 전략 판단 모드 설정, LLM 기반 AI decision, risk check, paper order, live order 1차 실행 흐름, 사용자 승인/거절 기반 주문 승인 대기 흐름, live 주문 상태 동기화/미체결 주문 취소 흐름, 대시보드 1차 조회 API, 전략 실행 중복 방지 보강, LangGraph 기반 전략 실행 graph 전환, risk check retry loop, graph 조회 API, 실행 중 graph snapshot 저장, 실제 수동 실행 기준 graph 검증까지 진행된 상태입니다.
+
+2026-06-30 현재 중요한 진행 상태:
+
+- 백엔드 핵심 기능 기준 진행률은 약 93%입니다.
+- `@langchain/langgraph` 기반으로 전략 실행 흐름을 `StrategyExecutionGraphService`로 전환했습니다.
+- 기존 `StrategyExecutionService.execute()`는 외부 진입점만 유지하고 내부 실행은 `StrategyExecutionGraphService.run()`에 위임합니다.
+- 실제 작업 단위는 `StrategyExecutionNodeService`로 분리했습니다.
+- 현재 graph 흐름은 내부 node 기준 `prepare -> collect -> decideAi -> checkRisk -> order -> finish`입니다.
+- 화면과 DB step 이름은 기존 실행 로그와 맞추기 위해 `ai_decision`, `risk_check`를 유지합니다.
+- `checkRisk` 이후 `addConditionalEdges()`를 사용해 `riskCheck.retryable=true`이고 AI 판단 시도 횟수가 남아 있으면 `decideAi`로 되돌아가도록 구성했습니다.
+- AI 판단 재시도는 `StrategyGraphState.aiDecisionAttemptCount`로 관리합니다.
+- `AiDecisionService` 내부의 최대 3회 retry는 LLM 응답 JSON/schema 보정용으로 유지했습니다.
+- LangGraph retry로 다시 AI 판단을 호출할 때는 직전 `RiskCheckResult`를 `previousRiskCheck`로 prompt에 전달해 같은 실패를 반복하지 않도록 했습니다.
+- `StrategyRunProgressService`를 추가해 graph node 실행 중 상태를 `strategy_runs.graph_snapshot`에 저장합니다.
+- `market_data`, `portfolio`, `news`, `asset_summary`, `ai_decision`, `risk_check`, `order` 단계는 실행 시작 시 `running`, 완료 시 `succeeded/skipped/failed` 상태를 snapshot에 저장합니다.
+- `collectMarketData()`와 `collectPortfolio()`는 필수 데이터 수집 실패 시 snapshot을 `failed`로 바꾼 뒤 error를 다시 throw해 run 실패로 전파합니다.
+- `news`, `asset_summary`는 외부 데이터 실패가 run 전체 실패로 번지지 않도록 step `failed`로 저장하고 계속 진행합니다.
+- `GET /strategy-runs/:runId/graph` API를 추가했습니다.
+- graph API는 실행 중이면 `strategy_runs.graph_snapshot`을 우선 반환하고, 완료 후에는 `strategy_runs.result.steps`를 node/edge로 변환해 반환합니다.
+- risk retry로 `ai_decision`, `risk_check`가 여러 번 실행된 경우에도 graph API가 `sequence` 순서대로 node를 반환합니다.
+- `strategy_order_approvals`에 연결된 approval이 있으면 graph API가 마지막에 `approval` node를 붙여 `pending`, `approved`, `rejected`, `executed`, `cancelled`, `failed` 상태를 표시합니다.
+- 사용자 확인 모드의 graph는 실제 LangGraph interrupt로 멈추는 방식이 아니라, approval row를 조회해 UI에서 수락/거절 대기 단계에 멈춘 것처럼 표현하는 방식입니다.
+- `StrategyRunService`는 graph snapshot이 실행 중 별도 update로 계속 갱신되는 점을 고려해, run 종료 시 최신 `StrategyRunEntity`를 다시 조회한 뒤 status/result/errorMessage만 갱신합니다.
+- `src/database/migrations/1782800000000-AddStrategyRunGraphSnapshot.ts` migration을 추가했습니다. 이 migration은 `strategy_runs.graph_snapshot jsonb` 컬럼을 추가합니다.
+- `graph_snapshot` migration 적용 후 실제 paper 전략 수동 실행 기준으로 graph 조회 흐름을 검증했습니다.
+
+2026-06-30 기준 주요 strategy run API:
+
+```http
+GET /strategy-runs
+GET /strategy-runs/:runId
+GET /strategy-runs/:runId/graph
+```
+
+2026-06-30 기준 LangGraph 관련 검증:
+
+```bash
+./node_modules/.bin/tsc --noEmit --project tsconfig.build.json --pretty false
+./node_modules/.bin/eslint "src/**/*.ts"
+```
+
+- 타입 검증은 통과했습니다.
+- 전체 `src/**/*.ts` lint도 통과했습니다.
+- `graph_snapshot` migration 적용 후 `POST /strategies/:id/run` 수동 실행을 검증했습니다.
+- 실행 중 `GET /strategy-runs/:runId/graph` 조회 시 node 상태가 `running`으로 표시되고, 완료 후 `succeeded/skipped/failed` 결과가 정상적으로 반환되는 것을 확인했습니다.
+- 실제 llama.cpp 기반 AI decision, Upbit market data, paper portfolio, news/asset summary 수집 흐름이 graph node로 표시되는 것을 확인했습니다.
+- `hold` 판단에서는 order node가 risk check 실패 문구가 아니라 `AI 판단이 hold이므로 주문을 생성하지 않습니다.` 문구로 표시되도록 보정했습니다.
+- `POST /strategies/:id/run`의 `id`는 `strategyId`, `GET /strategy-runs/:runId/graph`의 `runId`는 `strategyRunId`이므로 테스트 시 ID를 구분해야 합니다.
+- AI decision 중 `fetch failed`가 발생한 케이스는 수집 단계가 아니라 `LlmService`의 `/chat/completions` 호출 실패로 확인했습니다. 다음 단계에서 LLM 에러 메시지와 prompt 크기 제어를 보강합니다.
+
+2026-06-30 기준 바로 다음 작업:
+
+- `LlmService`에서 `fetch failed`처럼 원인이 흐릿한 에러가 발생했을 때 `error.name`, `error.message`, `error.cause`를 로그 또는 예외 메시지에 남기도록 보강합니다.
+- 로컬 llama.cpp 안정성을 위해 AI decision prompt에 넘기는 market/news/asset summary 데이터를 요약해 payload 크기를 줄입니다.
+- `strategyJudgmentMode=user` 전략을 실행해 approval이 생성되고, graph API 마지막에 `approval: pending` node가 붙는지 확인합니다.
+- `POST /strategy-order-approvals/:id/approve`, `POST /strategy-order-approvals/:id/reject` 후 graph API의 approval node 상태가 바뀌는지 확인합니다.
+- risk retry가 실제로 `ai_decision -> risk_check -> ai_decision` 순서로 남는지 5,000원 미만 주문 케이스로 추가 확인합니다.
+- live 전략은 실제 주문 위험이 있으므로 paper 전략으로 graph/risk/approval 흐름을 충분히 확인한 뒤 소액 정책을 정하고 진행합니다.
 
 2026-06-29 현재 중요한 진행 상태:
 
@@ -113,53 +171,64 @@ WHERE status = 'running';
 - dashboard 범위와 전체 `src/**/*.ts` lint는 통과했습니다.
 - `tsc --noEmit --project tsconfig.build.json` 기준 타입 검증도 통과했습니다.
 
-2026-06-29 기준 LangGraph 전환 방향:
+2026-06-30 기준 LangGraph 전환 완료 상태:
 
-- 이제 백엔드의 전략 실행 흐름은 LangGraph 1차 전환을 시작할 수 있는 상태입니다.
-- LangGraph를 붙이는 이유는 단순히 AI 호출이 있기 때문이 아니라, 이후 `risk check 실패 시 AI decision 재시도`, `필수 데이터 누락 시 collect 단계 재시도`, `hold일 때 주문 없이 종료`, `user judgment mode일 때 approval 생성 후 종료`처럼 조건부 분기와 재진입 흐름이 필요해지기 때문입니다.
-- 1차 전환에서는 기존 `StrategyExecutionService.execute()`의 선형 흐름을 그대로 LangGraph node로 옮기는 것을 목표로 합니다.
-- 1차 전환에서는 retry/loop를 최소화하고, 현재 동작 결과가 바뀌지 않도록 `prepare -> collect -> decide -> risk -> order -> finish` 흐름을 우선 구성합니다.
-- 2차 전환에서 retryable risk violation, 필수 데이터 누락, AI decision 재요청 같은 loop/conditional edge를 추가합니다.
-- 전략 pause/archive/delete 시 live 미체결 주문 정리는 중요한 운영 안전장치이지만, 현재 LangGraph 전환을 막는 선행 작업은 아닙니다. 이 작업은 LangGraph 1차 전환 이후 차후 보강 항목으로 둡니다.
+- 백엔드 전략 실행 흐름은 LangGraph 기반으로 1차 전환되었습니다.
+- `StrategyExecutionService.execute()`는 public 진입점만 유지하고, 실제 실행은 `StrategyExecutionGraphService.run()`이 담당합니다.
+- `StrategyExecutionGraphService`는 graph 구성과 conditional edge를 담당합니다.
+- `StrategyExecutionNodeService`는 market data, portfolio, news, asset summary, AI decision, risk check, order 등 실제 업무 로직 호출을 담당합니다.
+- `StrategyRunProgressService`는 graph node 시작/완료/실패 상태를 `strategy_runs.graph_snapshot`에 저장합니다.
+- LangGraph를 붙인 이유는 단순히 AI 호출이 있기 때문이 아니라, `risk check 실패 시 AI decision 재시도`, `hold일 때 주문 없이 종료`, `user judgment mode일 때 approval 대기 표시`, 실행 중 graph 상태 조회처럼 조건부 분기와 상태 추적이 필요하기 때문입니다.
+- 현재는 LangGraph interrupt/checkpointer를 사용하지 않습니다.
+- 사용자 승인 대기 흐름은 `strategy_order_approvals` row를 생성하고 graph API에서 approval node를 붙이는 방식으로 표현합니다.
+- 나중에 정말 graph 실행 자체를 중단/재개해야 할 필요가 생기면 LangGraph interrupt/checkpointer를 검토합니다.
 
-LangGraph 1차 전환 목표 구조:
+현재 LangGraph 실행 구조:
 
 ```txt
 StrategyRunService.runByStrategy()
 -> StrategyExecutionService.execute()
--> StrategyExecutionGraph.run()
+-> StrategyExecutionGraphService.run()
 -> prepareNode
--> collectMarketDataNode
--> collectNewsNode
--> collectAssetSummaryNode
--> collectPortfolioNode
+-> collectNode
+   -> collectMarketData()
+   -> collectPortfolio()
+   -> collectNews()
+   -> collectAssetSummary()
 -> aiDecisionNode
 -> riskCheckNode
+   -> retryable이면 aiDecisionNode로 재진입
 -> orderNode
 -> finish
 ```
 
-LangGraph 1차 전환에서 먼저 만들 타입:
+현재 LangGraph state 핵심 값:
 
 ```ts
 StrategyGraphState = {
   strategy;
   strategyRunId;
   steps;
-  collectedData;
+  collectedSteps;
   aiDecision;
   riskCheck;
-  orderResult;
+  orderStep;
+  aiDecisionAttemptCount;
+  result;
 }
 ```
 
-LangGraph 1차 전환 원칙:
+현재 LangGraph 전환 원칙:
 
 - 기존 service들을 버리지 않고 node 내부에서 재사용합니다.
 - `StrategyExecutionService.execute()`의 외부 응답 형태인 `StrategyRunResult`는 유지합니다.
 - `StrategyRunService`, scheduler, approval, paper/live order API의 public 흐름은 바꾸지 않습니다.
-- node 분리는 학습과 이후 loop 확장을 위한 구조 작업으로 진행합니다.
-- 처음부터 완전한 agent graph를 만들지 않고, 현재 선형 workflow를 graph로 옮기는 수준에서 시작합니다.
+- node 분리는 학습과 이후 loop 확장을 위한 구조 작업입니다.
+- 처음부터 완전한 agent graph를 만들지 않고, 현재 workflow를 graph로 옮긴 뒤 필요한 conditional edge를 추가하는 방식으로 진행합니다.
+- AI 응답 JSON/schema 보정 retry는 `AiDecisionService` 내부에서 담당합니다.
+- risk check 실패 후 AI 판단 자체를 다시 하는 비즈니스 retry는 LangGraph conditional edge가 담당합니다.
+- 실행 중 UI 표시용 상태는 `strategy_runs.graph_snapshot`에 저장합니다.
+- 실행 완료 후 영구 결과는 기존처럼 `strategy_runs.result.steps`에 저장합니다.
 
 2026-06-29 기준 `example/agentrade/frontend` 목업 분석:
 
@@ -216,24 +285,32 @@ LangGraph 이후 백엔드 보강 순서:
 
 ```txt
 1. LangGraph 1차 전환 완료
-2. GET /strategy-runs/:runId/graph 추가
-3. dashboard latest-run 응답을 graph node 상태와 맞춤
-4. GET /upbit/markets?quote=KRW 추가
-5. dashboard trade-logs / strategy-runs / approvals 필터 보강
-6. 필요하면 POST /strategies/parse-preview 추가
-7. settings/admin user API는 가장 마지막에 검토
-8. 그 다음 frontend 실제 API 연결
+2. riskCheck -> aiDecision retry conditional edge 추가 완료
+3. GET /strategy-runs/:runId/graph 추가 완료
+4. graph_snapshot 기반 실행 중 node 상태 저장 구조 추가 완료
+5. approval pending/approved/rejected/executed/cancelled graph node 표시 추가 완료
+6. graph_snapshot migration 실행 및 실제 paper run graph 테스트 완료
+7. LLM fetch 실패 원인 추적을 위한 에러 메시지/로그 보강
+8. AI decision prompt payload 경량화
+9. user judgment approval graph 상태 검증
+10. dashboard latest-run 응답을 graph node 상태와 맞춤
+11. GET /upbit/markets?quote=KRW 추가
+12. dashboard trade-logs / strategy-runs / approvals 필터 보강
+13. 필요하면 POST /strategies/parse-preview 추가
+14. settings/admin user API는 가장 마지막에 검토
+15. 그 다음 frontend 실제 API 연결
 ```
 
 다음 작업 방향:
 
 - 현재 변경 범위는 한 번 커밋해서 닫는 것이 좋습니다.
-- 다음 주요 작업은 LangGraph 1차 전환입니다.
-- 첫 작업은 `StrategyGraphState` 타입을 만들고, 현재 `StrategyExecutionService.execute()` 안의 단계들을 node 후보로 나누는 것입니다.
-- 그 다음 `StrategyExecutionGraph` 또는 유사한 graph 실행 service를 만들고, 기존 `StrategyExecutionService.execute()`가 해당 graph service를 호출하도록 점진적으로 전환합니다.
-- LangGraph 1차 전환이 끝나면 기존 수동 실행 API, scheduler, dashboard latest-run 응답이 그대로 동작하는지 확인합니다.
-- LangGraph 2차 전환에서 risk retry, data collect retry, AI decision 재요청 같은 조건부 edge를 추가합니다.
-- 전략 pause/archive/delete 시 live 미체결 주문 정리는 LangGraph 1차 전환 이후 차후 운영 안전장치로 진행합니다.
+- `graph_snapshot` migration 적용과 실제 LangGraph paper run 검증은 완료된 상태입니다.
+- 다음 주요 작업은 LLM 호출 실패 원인을 더 잘 볼 수 있도록 `LlmService` 에러 메시지/로그를 보강하는 것입니다.
+- 그 다음 AI decision prompt payload를 줄여 로컬 llama.cpp가 더 안정적으로 응답하도록 정리합니다.
+- risk retry가 실제로 `ai_decision -> risk_check -> ai_decision` 순서로 남는지 5,000원 미만 주문 케이스로 추가 검증합니다.
+- 사용자 확인 모드에서 approval이 생성되고 graph API에 `approval pending` node가 붙는지 확인합니다.
+- 승인/거절 API 호출 후 graph API의 approval node 상태가 바뀌는지 확인합니다.
+- 전략 pause/archive/delete 시 live 미체결 주문 정리는 LangGraph 검증 이후 차후 운영 안전장치로 진행합니다.
 - frontend dashboard 실제 연동은 백엔드 LangGraph 전환과 주요 실행 검증이 끝난 뒤 마지막 단계에서 진행합니다.
 
 2026-06-26 현재 중요한 진행 상태:

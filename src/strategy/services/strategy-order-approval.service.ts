@@ -74,6 +74,17 @@ export class StrategyOrderApprovalService {
     return approval;
   }
 
+  async findOneByStrategyRunId(input: {
+    userId: number;
+    strategyRunId: number;
+  }): Promise<StrategyOrderApprovalEntity | null> {
+    // 특정 strategy run에서 생성된 approval이 있는지 조회
+    return this.approvalRepository.findOneBy({
+      userId: input.userId,
+      strategyRunId: input.strategyRunId,
+    });
+  }
+
   // 승인 대기 상태 생성
   async createPending(input: {
     strategy: StrategyEntity;

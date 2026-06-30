@@ -13,6 +13,7 @@ import { UserEntity } from '@/user/entities/user.entity';
 import { StrategyEntity } from './strategy.entity';
 import { StrategyRunStatus } from '../enums/strategy-run-status.enum';
 import { StrategyRunResult } from '../types/strategy-run-result.type';
+import { StrategyRunGraphSnapshot } from '../types/graph/strategy-run-graph-snapshot.type';
 
 @Index('UQ_strategy_runs_one_running_per_strategy', ['strategyId'], {
   unique: true,
@@ -60,6 +61,9 @@ export class StrategyRunEntity {
 
   @Column({ type: 'jsonb', nullable: true })
   result!: StrategyRunResult | null;
+
+  @Column({ name: 'graph_snapshot', type: 'jsonb', nullable: true })
+  graphSnapshot!: StrategyRunGraphSnapshot | null;
 
   @CreateDateColumn({ name: 'created_at' })
   createdAt!: Date;

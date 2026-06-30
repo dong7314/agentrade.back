@@ -13,14 +13,17 @@ import { JwtAuthGuard } from '@/auth/guards/jwt-auth.guard';
 
 import { StrategyRunService } from '../services/strategy-run.service';
 
-import { StrategyRunResponseDto } from '../dto/strategy-run-response.dto';
-import type { AuthenticatedUser } from '@/auth/types/authenticated-user.type';
-import { FindStrategyRunsQueryDto } from '../dto/find-strategy-run.query.dto';
-import { PaginatedResult } from '@/common/types/paginated.type';
 import {
   ApiGetStrategyRun,
   ApiGetStrategyRuns,
+  ApiGetStrategyRunGraph,
 } from '../docs/strategy-run-api.docs';
+
+import { PaginatedResult } from '@/common/types/paginated.type';
+import { StrategyRunResponseDto } from '../dto/strategy-run-response.dto';
+import { FindStrategyRunsQueryDto } from '../dto/find-strategy-run.query.dto';
+import { StrategyRunGraphResponseDto } from '../dto/strategy-run-graph-response.dto';
+import type { AuthenticatedUser } from '@/auth/types/authenticated-user.type';
 
 @ApiTags('Strategy Runs')
 @Controller('strategy-runs')
@@ -58,5 +61,19 @@ export class StrategyRunController {
     );
 
     return StrategyRunResponseDto.fromEntity(strategyRun);
+  }
+
+  @Get(':runId/graph')
+  @UseGuards(JwtAuthGuard)
+  @ApiGetStrategyRunGraph()
+  async findGraph(
+    @Param('runId', ParseIntPipe) strategyRunId: number,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<StrategyRunGraphResponseDto> {
+    // 특정 실행 이력을 graph node/edge 형태로 조회
+    return this.strategyRunService.findGraphByStrategyRunId(
+      strategyRunId,
+      user.id,
+    );
   }
 }
